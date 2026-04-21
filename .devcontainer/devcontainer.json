@@ -1,0 +1,25 @@
+{
+  "name": "claude-bioflow devcontainer",
+  "build": {
+    "context": "..",
+    "dockerfile": "../image/Dockerfile"
+  },
+  "remoteUser": "node",
+  "workspaceFolder": "/workspace",
+  "mounts": [
+    "source=${localWorkspaceFolder}/hub/workspaces/devuser/.pantheon/skills,target=/home/node/.claude/skills,type=bind",
+    "source=${localWorkspaceFolder}/hub/workspaces/devuser/.pantheon/agents,target=/home/node/.claude/agents,type=bind",
+    "source=${localWorkspaceFolder}/hub/workspaces/devuser/.pantheon/chats,target=/workspace/.pantheon/chats,type=bind"
+  ],
+  "runArgs": [
+    "--network=host"
+  ],
+  "containerEnv": {
+    "ID_HASH": "devcontainer0",
+    "NATS_SERVERS": "nats://localhost:4223",
+    "WORKSPACE_ROOT": "/workspace",
+    "DEFAULT_PROJECT": "/workspace",
+    "HOME": "/home/node"
+  },
+  "postCreateCommand": "node --version && claude --version"
+}

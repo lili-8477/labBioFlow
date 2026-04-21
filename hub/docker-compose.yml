@@ -1,0 +1,51 @@
+# claude-bioflow hub — shared infra (NATS + nginx). Per-user containers are
+# added dynamically via scripts/add-user.sh, not declared here.
+#
+# Ports intentionally differ from the pantheon-hub stack so both can run on
+# the same host during a dual-run parity test.
+
+name: claude-bioflow
+
+services:
+  nats:
+    image: nats:2.10-alpine
+    container_name: claude-bioflow-nats
+    command: -c /etc/nats/nats.conf
+    ports:
+      - "4223:4222"   # NATS client (external, optional)
+      - "8081:8080"   # NATS WebSocket (proxied by nginx at /ws/)
+      - "8223:8222"   # NATS monitoring
+    volumes:
+      - ./nats.conf:/etc/nats/nats.conf:ro
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - bioflow-net
+
+  nginx:
+    image: nginx:alpine
+    container_name: claude-bioflow-nginx
+    ports:
+      - "8088:80"     # UI + /ws/ — front with your own TLS terminator in prod
+    volumes:
+      # Build the frontend (`cd frontend && npm run build`) BEFORE bringing up
+      # nginx. If the host dir doesn't exist, Docker auto-creates it as root
+      # and the next `npm run build` fails with EACCES.
+      - ../frontend/dist:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./htpasswd:/etc/nginx/htpasswd:ro
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - bioflow-net
+
+networks:
+  bioflow-net:
+    driver: bridge

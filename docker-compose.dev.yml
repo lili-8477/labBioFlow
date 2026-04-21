@@ -1,0 +1,46 @@
+# Single-user local dev — run the adapter + NATS without nginx, for fast iteration.
+# Point the frontend at ws://localhost:4223 directly (no /ws/ prefix proxy).
+
+name: claude-bioflow-dev
+
+services:
+  nats:
+    image: nats:2.10-alpine
+    container_name: claude-bioflow-dev-nats
+    command: -c /etc/nats/nats.conf
+    ports:
+      - "4223:4222"
+      - "8081:8080"   # frontend connects here directly: ws://localhost:8081
+      - "8223:8222"
+    volumes:
+      - ./hub/nats.conf:/etc/nats/nats.conf:ro
+    networks:
+      - bioflow-dev-net
+
+  adapter:
+    image: claude-bioflow:dev
+    container_name: claude-bioflow-dev-user
+    depends_on: [nats]
+    environment:
+      ID_HASH: "devuser000"
+      NATS_SERVERS: "nats://nats:4222"
+      NATS_USER: "agent"
+      WORKSPACE_ROOT: "/workspace"
+      DEFAULT_PROJECT: "/workspace"
+      HOME: "/home/node"
+    env_file:
+      - path: ./hub/workspaces/devuser/.env
+        required: false
+    volumes:
+      - ./hub/workspaces/devuser/projects:/workspace/projects
+      - ./hub/workspaces/devuser/.pantheon/chats:/workspace/.pantheon/chats
+      - ./hub/workspaces/devuser/.pantheon/skills:/home/node/.claude/skills
+      - ./hub/workspaces/devuser/.pantheon/agents:/home/node/.claude/agents
+      - ./hub/workspaces/devuser/.pantheon/settings.json:/home/node/.claude/settings.json
+    working_dir: /workspace
+    networks:
+      - bioflow-dev-net
+
+networks:
+  bioflow-dev-net:
+    driver: bridge
