@@ -58,7 +58,26 @@ export async function processFile(opts: ProcessFileOptions): Promise<void> {
   while (chunkStart < endOffset) {
     const chunkEnd = Math.min(chunkStart + maxPassBytes, endOffset);
     const { committedEnd, buf } = await readChunk(fullPath, chunkStart, chunkEnd, endOffset);
-    if (buf === "") break;
+
+    if (buf === "") {
+      if (committedEnd > chunkStart) {
+        // Oversized-line skip path: no parseable content, but readChunk
+        // scanned forward past the offending line and found a newline later
+        // in the file. Advance the offset past it and keep going.
+        await commitPass(pool, {
+          sessionUpserts: [],
+          tokenRows: [],
+          offset: { username, jsonlPath: fullPath, byteOffset: committedEnd, inode },
+          resetSessionIds: [],
+        });
+        isResetPass = false;
+        chunkStart = committedEnd;
+        continue;
+      }
+      // Genuine no-progress: partial in-progress line at EOF. Try again
+      // on the next event.
+      break;
+    }
 
     const entries = parseJsonlBuffer(buf);
     const projection = projectEntries(entries, {
@@ -89,16 +108,28 @@ export async function processFile(opts: ProcessFileOptions): Promise<void> {
   }
 }
 
+const SKIP_SCAN_WINDOW = 1024 * 1024; // 1 MiB forward-scan for oversized-line skip
+
 /**
- * Read [start, hardEnd) from the file, but back up to the last newline we can
- * find so we never commit a partial line. If this is the final chunk
- * (hardEnd === fileSize), we still require a trailing newline.
+ * Read [start, hardEnd) from the file, backing up to the last newline so we
+ * never commit a partial line.
+ *
+ * Special case: if the slice has no newline at all and there are more bytes
+ * past hardEnd, scan forward in 1 MiB windows for the next newline so we can
+ * skip past a single oversized line that exceeds maxPassBytes. The return in
+ * that case is `{committedEnd: skipEnd, buf: ""}` — the caller commits an
+ * empty pass at `skipEnd` and continues. Without this, a line larger than
+ * maxPassBytes would wedge the file forever.
+ *
+ * If no newline is found anywhere before EOF, treat as a partial in-progress
+ * write: return `{committedEnd: start, buf: ""}` so the caller breaks and
+ * tries again on the next event.
  */
 async function readChunk(
   fullPath: string,
   start: number,
   hardEnd: number,
-  _fileSize: number,
+  fileSize: number,
 ): Promise<{ committedEnd: number; buf: string }> {
   const fh = await fs.open(fullPath, "r");
   try {
@@ -107,10 +138,32 @@ async function readChunk(
     await fh.read(buffer, 0, len, start);
     const text = buffer.toString("utf8");
     const lastNl = text.lastIndexOf("\n");
-    if (lastNl === -1) return { committedEnd: start, buf: "" };
-    // Everything up to and including the last newline is safe to parse.
-    const safe = text.slice(0, lastNl + 1);
-    return { committedEnd: start + Buffer.byteLength(safe, "utf8"), buf: safe };
+    if (lastNl !== -1) {
+      const safe = text.slice(0, lastNl + 1);
+      return { committedEnd: start + Buffer.byteLength(safe, "utf8"), buf: safe };
+    }
+    // No newline in the requested window.
+    if (hardEnd >= fileSize) {
+      // At EOF: partial in-progress line. Don't advance — wait for more bytes.
+      return { committedEnd: start, buf: "" };
+    }
+    // Bytes past our window exist: scan forward for the next newline so we
+    // can skip past this oversized line without wedging.
+    let scanPos = hardEnd;
+    while (scanPos < fileSize) {
+      const winEnd = Math.min(scanPos + SKIP_SCAN_WINDOW, fileSize);
+      const winLen = winEnd - scanPos;
+      const winBuf = Buffer.alloc(winLen);
+      await fh.read(winBuf, 0, winLen, scanPos);
+      const nlIdx = winBuf.indexOf(0x0a);
+      if (nlIdx !== -1) {
+        const skipEnd = scanPos + nlIdx + 1;
+        return { committedEnd: skipEnd, buf: "" };
+      }
+      scanPos = winEnd;
+    }
+    // No newline all the way to EOF — still partial in-progress.
+    return { committedEnd: start, buf: "" };
   } finally {
     await fh.close();
   }
