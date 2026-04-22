@@ -97,6 +97,55 @@ describe("readSessionMessages", () => {
     expect(JSON.parse(tc.function.arguments)).toEqual({ command: "ls" });
   });
 
+  it("skips the 'Base directory for this skill' user-text block injected after a Skill tool call", async () => {
+    await writeSession([
+      { type: "user", message: { role: "user", content: [{ type: "text", text: "explain QC" }] } },
+      {
+        type: "assistant",
+        message: {
+          id: "m1",
+          role: "assistant",
+          content: [{ type: "tool_use", id: "toolu_skill_1", name: "Skill", input: { skill: "sc-preprocessing" } }],
+        },
+      },
+      // Empty tool_result ack from the Skill invocation.
+      {
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "toolu_skill_1", content: "" }],
+        },
+      },
+      // The Skill payload comes as a plain user-text block — this must NOT
+      // surface as a user message.
+      {
+        type: "user",
+        message: {
+          role: "user",
+          content: [{
+            type: "text",
+            text: "Base directory for this skill: /home/node/.claude/skills/sc-preprocessing\n\n# SC Best Practices: Preprocessing\n\n...",
+          }],
+        },
+      },
+      {
+        type: "assistant",
+        message: {
+          id: "m2",
+          role: "assistant",
+          content: [{ type: "text", text: "For a 10x PBMC dataset, use MAD-based thresholds ..." }],
+        },
+      },
+    ]);
+    const msgs = await readSessionMessages(home, cwd, chatId);
+    // Expected: user "explain QC", assistant tool_use, tool_result, assistant answer.
+    // NO user message carrying the skill body.
+    expect(msgs.filter((m) => m.role === "user").map((m) => m.content)).toEqual(["explain QC"]);
+    expect(msgs.some((m) => (m.content || "").startsWith("Base directory"))).toBe(false);
+    expect(msgs.filter((m) => m.role === "tool")).toHaveLength(1);
+    expect(msgs[msgs.length - 1]?.content).toMatch(/MAD-based thresholds/);
+  });
+
   it("tolerates a truncated last JSONL line", async () => {
     const encoded = cwd.replace(/\//g, "-");
     await fs.writeFile(

@@ -60,6 +60,13 @@ export async function readSessionMessages(
   return out;
 }
 
+/** Recognises the skill-payload text Claude Code injects after a Skill tool call.
+ *  The anchor is stable across skills: every injection starts with the literal
+ *  "Base directory for this skill:" line pointing at ~/.claude/skills/<name>/. */
+function isSkillInjection(text: string): boolean {
+  return /^Base directory for this skill:\s*\S+\.claude\/skills\//.test(text.trimStart());
+}
+
 function projectEntry(entry: Record<string, unknown>): LegacyMessage[] {
   const type = entry.type as string;
   if (type === "user") {
@@ -72,8 +79,18 @@ function projectEntry(entry: Record<string, unknown>): LegacyMessage[] {
       const out: LegacyMessage[] = [];
       const textParts: string[] = [];
       for (const block of content as Array<Record<string, unknown>>) {
-        if (block.type === "text") textParts.push(String(block.text ?? ""));
-        else if (block.type === "tool_result") {
+        if (block.type === "text") {
+          const text = String(block.text ?? "");
+          // Claude Code injects the full skill body back as a user text block
+          // right after a `Skill` tool call (see session JSONL: assistant
+          // tool_use → user tool_result ack → user text "Base directory for
+          // this skill: ..."). It isn't actually user input; rendering it in
+          // the chat transcript makes it look like the user pasted the skill.
+          // Drop it — the timeline still shows the Skill tool invocation,
+          // which is the signal the user needs.
+          if (isSkillInjection(text)) continue;
+          textParts.push(text);
+        } else if (block.type === "tool_result") {
           const raw = block.content;
           let text: string;
           if (typeof raw === "string") text = raw;
