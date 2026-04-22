@@ -1,0 +1,44 @@
+export interface Config {
+  pgUrl: string;
+  workspacesRoot: string;
+  maxConcurrentFiles: number;
+  maxPassBytes: number;
+  logLevel: "trace" | "debug" | "info" | "warn" | "error" | "fatal";
+  migrationLockKey: bigint;
+  pgStartupMaxWaitSec: number;
+}
+
+function parseIntVar(env: Record<string, string | undefined>, name: string, fallback: number): number {
+  const raw = env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || !Number.isInteger(n)) {
+    throw new Error(`${name} must be an integer; got ${JSON.stringify(raw)}`);
+  }
+  return n;
+}
+
+function parseBigintVar(env: Record<string, string | undefined>, name: string, fallback: bigint): bigint {
+  const raw = env[name];
+  if (raw === undefined || raw === "") return fallback;
+  try {
+    return BigInt(raw);
+  } catch {
+    throw new Error(`${name} must be a valid bigint literal; got ${JSON.stringify(raw)}`);
+  }
+}
+
+export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
+  const pgUrl = env.PG_URL;
+  if (!pgUrl) throw new Error("PG_URL is required");
+  const logLevel = (env.LOG_LEVEL ?? "info") as Config["logLevel"];
+  return {
+    pgUrl,
+    workspacesRoot: env.WORKSPACES_ROOT ?? "/workspaces",
+    maxConcurrentFiles: parseIntVar(env, "MAX_CONCURRENT_FILES", 8),
+    maxPassBytes: parseIntVar(env, "MAX_PASS_BYTES", 8 * 1024 * 1024),
+    logLevel,
+    migrationLockKey: parseBigintVar(env, "MIGRATION_LOCK_KEY", 0x62696f666c77n),
+    pgStartupMaxWaitSec: parseIntVar(env, "PG_STARTUP_MAX_WAIT_SEC", 300),
+  };
+}
