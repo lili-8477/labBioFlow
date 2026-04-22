@@ -12,6 +12,25 @@ WORKSPACES_DIR="${HUB_DIR}/workspaces"
 SHARED_DIR="${WORKSPACES_DIR}/shared"
 NETWORK="claude-bioflow_bioflow-net"
 NATS_HOST="claude-bioflow-nats"
+ENV_FILE="${HUB_DIR}/.env"
+
+ensure_hub_env() {
+    if [[ -f "$ENV_FILE" ]] && grep -q '^POSTGRES_PASSWORD=' "$ENV_FILE"; then
+        return
+    fi
+    local pw
+    pw=$(openssl rand -base64 32 | tr -d '=+/')
+    touch "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+    if grep -q '^POSTGRES_PASSWORD=' "$ENV_FILE" 2>/dev/null; then
+        return
+    fi
+    {
+        echo "# claude-bioflow hub secrets — do not commit"
+        echo "POSTGRES_PASSWORD=${pw}"
+    } >> "$ENV_FILE"
+    echo "Generated ${ENV_FILE} with a random POSTGRES_PASSWORD."
+}
 
 IMAGE="${IMAGE:-claude-bioflow:dev}"
 USERNAME=""
@@ -83,6 +102,7 @@ if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
     exit 1
 fi
 
+ensure_hub_env
 echo "=== Adding user: ${USERNAME} ==="
 
 # --- 1. Workspace + config scaffolding --------------------------------------
