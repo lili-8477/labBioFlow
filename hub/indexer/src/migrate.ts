@@ -28,12 +28,18 @@ export async function runMigrations(opts: MigrateOptions): Promise<void> {
           );
           await client.query("COMMIT");
         } catch (e) {
-          await client.query("ROLLBACK");
+          // Best-effort rollback — if it throws, we still want to surface the
+          // original migration error, not the cleanup failure.
+          try { await client.query("ROLLBACK"); } catch { /* swallowed */ }
           throw e;
         }
       }
     } finally {
-      await client.query("SELECT pg_advisory_unlock($1)", [opts.lockKey.toString()]);
+      // Best-effort unlock — session-level advisory locks auto-release on
+      // connection close, so swallowing unlock errors here cannot leak a lock.
+      try {
+        await client.query("SELECT pg_advisory_unlock($1)", [opts.lockKey.toString()]);
+      } catch { /* swallowed */ }
     }
   } finally {
     client.release();
