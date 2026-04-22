@@ -43,7 +43,8 @@ docker run -d \
     -v "${WORKSPACE}/local_projects:/workspace/local_projects" \
     -v "${WORKSPACE}/.pantheon/chats:/workspace/.pantheon/chats" \
     -v "${WORKSPACE}/.env:/workspace/.env:ro" \
-    -v "${WORKSPACE}/.pantheon/skills:/home/node/.claude/skills" \
+    -v "${WORKSPACE}/CLAUDE.md:/workspace/CLAUDE.md:ro" \
+    -v "${WORKSPACE}/.pantheon/skills:/home/node/.claude/skills-user" \
     -v "${WORKSPACE}/.pantheon/agents:/home/node/.claude/agents" \
     -v "${WORKSPACE}/.pantheon/settings.json:/home/node/.claude/settings.json" \
     -v "${WORKSPACE}/.pantheon/claude-projects:/home/node/.claude/projects" \

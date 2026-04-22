@@ -106,6 +106,13 @@ fi
 # Shared dirs — created on demand by the first user provisioning.
 mkdir -p "${SHARED_DIR}/reference" "${SHARED_DIR}/projects" "${SHARED_DIR}/skills"
 
+# Bootstrap the top-level CLAUDE.md into the user workspace if shared has one
+# and the user doesn't already have their own. Claude Code auto-discovers
+# CLAUDE.md walking up from the cwd, so this is a good nudge for skill use.
+if [[ -f "${SHARED_DIR}/CLAUDE.md" && ! -f "${WORKSPACE}/CLAUDE.md" ]]; then
+    cp "${SHARED_DIR}/CLAUDE.md" "${WORKSPACE}/CLAUDE.md"
+fi
+
 # Per-user .env
 if [[ ! -f "${WORKSPACE}/.env" ]]; then
     cat > "${WORKSPACE}/.env" <<EOF
@@ -150,7 +157,12 @@ MOUNTS=(
     -v "${WORKSPACE}/local_projects:/workspace/local_projects"
     -v "${WORKSPACE}/.pantheon/chats:/workspace/.pantheon/chats"
     -v "${WORKSPACE}/.env:/workspace/.env:ro"
-    -v "${WORKSPACE}/.pantheon/skills:/home/node/.claude/skills"
+    # Workspace-level instructions Claude Code auto-loads from cwd.
+    -v "${WORKSPACE}/CLAUDE.md:/workspace/CLAUDE.md:ro"
+    # Skills are split: per-user skills at skills-user, org-wide at skills-shared.
+    # The entrypoint symlinks both into ~/.claude/skills/ so Claude Code
+    # auto-discovers them. User skills win on name collisions.
+    -v "${WORKSPACE}/.pantheon/skills:/home/node/.claude/skills-user"
     -v "${WORKSPACE}/.pantheon/agents:/home/node/.claude/agents"
     -v "${WORKSPACE}/.pantheon/settings.json:/home/node/.claude/settings.json"
     # Persist Claude Code session JSONLs across container recreations.

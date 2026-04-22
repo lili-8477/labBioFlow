@@ -5,3 +5,4 @@ dist/
 hub/workspaces/*/
 !hub/workspaces/shared/
 hub/htpasswd
+hub/users.md
