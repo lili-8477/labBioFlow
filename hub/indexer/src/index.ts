@@ -1,0 +1,64 @@
+import { Pool } from "pg";
+import pino from "pino";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+import { loadConfig } from "./config.js";
+import { runMigrations } from "./migrate.js";
+import { startWatcher } from "./watcher.js";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+
+async function main(): Promise<void> {
+  const cfg = loadConfig();
+  const logger = pino({ level: cfg.logLevel });
+
+  const pool = new Pool({ connectionString: cfg.pgUrl, max: Math.max(10, cfg.maxConcurrentFiles * 2) });
+
+  await waitForPg(pool, cfg.pgStartupMaxWaitSec, logger);
+
+  await runMigrations({
+    pool,
+    migrationsDir: path.resolve(HERE, "..", "migrations"),
+    lockKey: cfg.migrationLockKey,
+  });
+  logger.info({ workspacesRoot: cfg.workspacesRoot }, "migrations applied — starting watcher");
+
+  const handle = startWatcher({
+    pool,
+    watchRoot: cfg.workspacesRoot,
+    maxConcurrentFiles: cfg.maxConcurrentFiles,
+    maxPassBytes: cfg.maxPassBytes,
+    logger,
+  });
+
+  const shutdown = async (sig: NodeJS.Signals): Promise<void> => {
+    logger.info({ sig }, "shutdown signal");
+    await handle.close();
+    await pool.end();
+    process.exit(0);
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+}
+
+async function waitForPg(pool: Pool, maxWaitSec: number, logger: pino.Logger): Promise<void> {
+  const deadline = Date.now() + maxWaitSec * 1000;
+  let delay = 500;
+  while (Date.now() < deadline) {
+    try {
+      await pool.query("SELECT 1");
+      return;
+    } catch (err) {
+      logger.warn({ err: (err as Error).message, delay }, "waiting for PG");
+      await new Promise((r) => setTimeout(r, delay));
+      delay = Math.min(delay * 2, 30_000);
+    }
+  }
+  logger.error("PG unreachable past PG_STARTUP_MAX_WAIT_SEC — exiting");
+  process.exit(1);
+}
+
+main().catch((err) => {
+  console.error("fatal:", err);
+  process.exit(1);
+});
