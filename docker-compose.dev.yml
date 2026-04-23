@@ -20,7 +20,11 @@ services:
   adapter:
     image: claude-bioflow:dev
     container_name: claude-bioflow-dev-user
-    depends_on: [nats]
+    depends_on:
+      nats:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     environment:
       ID_HASH: "devuser000"
       NATS_SERVERS: "nats://nats:4222"
@@ -28,6 +32,9 @@ services:
       WORKSPACE_ROOT: "/workspace"
       DEFAULT_PROJECT: "/workspace"
       HOME: "/home/node"
+      PG_URL: "postgres://bioflow:${POSTGRES_PASSWORD}@postgres:5432/bioflow"
+      USERNAME: "devuser"
+      SIDECAR_IMPORT_ON_BOOT: "1"
     env_file:
       - path: ./hub/workspaces/devuser/.env
         required: false
@@ -43,6 +50,7 @@ services:
 
   postgres:
     image: postgres:16-alpine
+    container_name: claude-bioflow-dev-postgres
     env_file: [ ./hub/.env ]
     environment:
       POSTGRES_USER: bioflow
@@ -55,9 +63,12 @@ services:
       timeout: 3s
       retries: 5
       start_period: 10s
+    networks:
+      - bioflow-dev-net
 
   indexer:
     build: ./hub/indexer
+    container_name: claude-bioflow-dev-indexer
     env_file: [ ./hub/.env ]
     environment:
       PG_URL: "postgres://bioflow:${POSTGRES_PASSWORD}@postgres:5432/bioflow"
@@ -69,6 +80,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    networks:
+      - bioflow-dev-net
 
 networks:
   bioflow-dev-net:
