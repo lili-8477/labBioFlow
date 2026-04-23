@@ -54,12 +54,22 @@ class Bridge:
             except Exception:
                 pass
         self.kernelspec = kernelspec or "python3"
+        self.pending.clear()  # stale msg_ids from old kernel will never reply
         emit({"op": "status", "state": "starting"})
         self.km = KernelManager(kernel_name=self.kernelspec)
         self.km.start_kernel()
         self.kc = self.km.client()
         self.kc.start_channels()
-        self.kc.wait_for_ready(timeout=60)
+        # wait_for_ready can legitimately take >60s when the old kernel is
+        # holding ~5GB of CUDA memory and its teardown blocks on driver
+        # cleanup. Bump the window and ALWAYS start the reader threads,
+        # even if wait_for_ready raised — the kernel usually IS ready by
+        # the time we hit the timeout, we just couldn't confirm via the
+        # ready handshake.
+        try:
+            self.kc.wait_for_ready(timeout=120)
+        except Exception as e:
+            emit({"op": "error", "error": f"wait_for_ready: {e}"})
         emit({"op": "status", "state": "idle"})
         self._start_iopub_reader()
 
@@ -139,15 +149,22 @@ class Bridge:
         emit({"op": "interrupted"})
 
     def restart(self) -> None:
-        if self.km:
-            self.km.restart_kernel()
-            self.kc = self.km.client()
-            self.kc.start_channels()
-            self.kc.wait_for_ready(timeout=60)
-            self._start_iopub_reader()
+        if not self.km:
             emit({"op": "restarted"})
-        else:
-            emit({"op": "restarted"})
+            return
+        # Tear down cleanly rather than km.restart_kernel(), which shares
+        # port state and historically hangs when the old kernel is slow to
+        # release CUDA memory. Force a fresh shutdown → fresh start via
+        # ensure(), which has proper pending/cleanup handling.
+        self.pending.clear()
+        try:
+            self.km.shutdown_kernel(now=True)
+        except Exception:
+            pass
+        self.km = None
+        self.kc = None
+        self.ensure(self.kernelspec)
+        emit({"op": "restarted"})
 
     def shutdown(self) -> None:
         if self.km:
