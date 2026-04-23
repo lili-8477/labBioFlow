@@ -254,7 +254,7 @@ export class NotebookManager {
     };
   }
 
-  manageKernel(action: string): unknown {
+  async manageKernel(action: string): Promise<unknown> {
     if (!this.kernel) {
       if (action === "status")
         return { success: true, status: "dead", kernel_status: "dead", kernel_session_id: null };
@@ -285,9 +285,45 @@ export class NotebookManager {
       return { success: true, kernel_session_id: sessionId };
     }
     if (action === "variables") {
-      // Variables introspection not yet implemented — return empty so the UI
-      // shows an empty inspector rather than an error.
-      return { success: true, variables: {}, kernel_session_id: sessionId };
+      // Run a small introspection snippet in the kernel and parse its
+      // stdout (JSON). We pay ~10-50ms per call for a running kernel;
+      // fresh kernels need a kernel-start first (~1-2s).
+      const code =
+        "import json as _j, types as _t\n" +
+        "_SKIP = {'In','Out','get_ipython','exit','quit','open'}\n" +
+        "_o = {}\n" +
+        "for _k, _v in list(globals().items()):\n" +
+        "    if _k.startswith('_'): continue\n" +
+        "    if _k in _SKIP: continue\n" +
+        "    if isinstance(_v, _t.ModuleType): continue\n" +
+        "    _tn = type(_v).__name__\n" +
+        "    try:\n" +
+        "        _r = repr(_v)\n" +
+        "        if len(_r) > 200: _r = _r[:200] + '...'\n" +
+        "    except Exception:\n" +
+        "        _r = '<repr failed>'\n" +
+        "    _shape = None\n" +
+        "    try:\n" +
+        "        _shape = str(tuple(_v.shape)) if hasattr(_v, 'shape') else None\n" +
+        "    except Exception:\n" +
+        "        pass\n" +
+        "    _o[_k] = {'type': _tn, 'repr': _r, 'shape': _shape}\n" +
+        "print(_j.dumps(_o))\n";
+      try {
+        const { stdout } = await this.kernel.executeAndCollect(
+          "__vars_introspect__",
+          code,
+        );
+        const variables = JSON.parse(stdout.trim() || "{}");
+        return { success: true, variables, kernel_session_id: sessionId };
+      } catch (e) {
+        return {
+          success: true,
+          variables: {},
+          error: e instanceof Error ? e.message : String(e),
+          kernel_session_id: sessionId,
+        };
+      }
     }
     return { success: false, error: `unsupported action: ${action}`, kernel_session_id: sessionId };
   }

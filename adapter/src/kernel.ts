@@ -42,6 +42,14 @@ export class KernelBridge {
   >();
   private lastExecuteCellId: string | null = null;
   private status_: KernelStatus = "unknown";
+  /**
+   * Per-cell-id stdout collectors. When `executeAndCollect` runs an
+   * introspection snippet, it registers a buffer here so the iopub
+   * handler appends stream-stdout text for that cell id. Used to
+   * capture structured output (e.g. JSON from a list-vars snippet)
+   * without parsing the full iopub stream.
+   */
+  private outputCollectors = new Map<string, string[]>();
 
   constructor(private deps: KernelDeps) {}
 
@@ -102,6 +110,14 @@ export class KernelBridge {
         const state = iopub.content.execution_state as string | undefined;
         if (state === "busy" || state === "idle") this.status_ = state;
       }
+      // Per-cell stdout collector (for executeAndCollect callers)
+      if (iopub.msg_type === "stream" && iopub.cell_id) {
+        const c = iopub.content as { name?: string; text?: string };
+        if (c.name === "stdout") {
+          const buf = this.outputCollectors.get(iopub.cell_id);
+          if (buf) buf.push(String(c.text ?? ""));
+        }
+      }
       this.deps.onIopub(this.deps.sessionId, iopub);
       return;
     }
@@ -149,6 +165,27 @@ export class KernelBridge {
       this.pendingReplies.set(cellId, { resolve, reject });
       this.write({ op: "execute", cell_id: cellId, code, kernelspec });
     });
+  }
+
+  /**
+   * Run `code` in the kernel and return BOTH the execute reply and the
+   * collected stdout stream for that run. Used for introspection (e.g.
+   * listing variables) where the caller wants structured output rather
+   * than the full iopub stream.
+   */
+  async executeAndCollect(
+    cellId: string,
+    code: string,
+    kernelspec = "python3",
+  ): Promise<{ reply: ExecuteReply; stdout: string }> {
+    const buf: string[] = [];
+    this.outputCollectors.set(cellId, buf);
+    try {
+      const reply = await this.execute(cellId, code, kernelspec);
+      return { reply, stdout: buf.join("") };
+    } finally {
+      this.outputCollectors.delete(cellId);
+    }
   }
 
   interrupt(): void {
