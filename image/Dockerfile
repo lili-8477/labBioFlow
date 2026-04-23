@@ -25,6 +25,16 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
 # 2. Claude Code CLI — pinned. Bump deliberately.
 RUN npm install -g @anthropic-ai/claude-code@2.1.116
 
+# 2b. Pre-install torch + CUDA-13 wheel stack (~2.5 GB) so agents don't
+#     have to pull it on every container recreate. `--no-cache-dir` saves
+#     ~1 GB of pip cache from landing in the image. Downstream packages
+#     (scSurvival, scvi-tools, scArches, …) install in seconds once torch
+#     is already present.
+#
+#     Placed BEFORE adapter COPY steps so the pip layer is cached across
+#     adapter code edits — only torch version bumps invalidate it.
+RUN pip install --no-cache-dir torch
+
 # 3. Adapter bundle + Python kernel bridge.
 #    jupyter_client is already in the base image (pantheon-agents-sc's Python env).
 WORKDIR /opt/adapter
