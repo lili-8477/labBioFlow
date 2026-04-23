@@ -157,21 +157,36 @@ export class NotebookManager {
     return this.info(relPath, nb);
   }
 
+  /**
+   * Add a cell. `position` follows the Pantheon-frontend contract:
+   *   null/undefined            → append at end
+   *   cell_id (UUID-like)       → insert AFTER that cell
+   *   numeric string "N"        → insert AT index N (pushes cell-N down;
+   *                                i.e. new cell becomes the Nth cell —
+   *                                the frontend uses this to emulate "before")
+   */
   async addCell(
     relPath: string,
     cellType: string,
     source: string,
-    afterCellId: string | undefined,
+    position: string | undefined,
   ): Promise<unknown> {
     const nb = await this.readFile(relPath);
     const newCell = normalizeCell({ cell_type: cellType, source, outputs: [] });
-    if (!afterCellId) {
+
+    if (!position) {
       nb.cells.push(newCell);
+    } else if (/^\d+$/.test(position)) {
+      // Numeric index: insert AT this position (new cell becomes cells[N]).
+      const idx = Math.min(parseInt(position, 10), nb.cells.length);
+      nb.cells.splice(idx, 0, newCell);
     } else {
-      const idx = nb.cells.findIndex((c) => c.id === afterCellId);
+      // Cell id: insert AFTER that cell.
+      const idx = nb.cells.findIndex((c) => c.id === position);
       if (idx < 0) nb.cells.push(newCell);
       else nb.cells.splice(idx + 1, 0, newCell);
     }
+
     await this.writeFile(relPath, nb);
     return { ...this.info(relPath, nb), cell_id: newCell.id };
   }
@@ -277,15 +292,29 @@ export class NotebookManager {
         return this.readNotebook(p);
       case "create_notebook":
         return this.createNotebook(p, (args.language as string) ?? "python");
-      case "add_cell":
+      case "add_cell": {
+        // Frontend sends Pantheon-legacy names (`content`, `position`); keep
+        // `source`/`after_cell_id` as aliases for anything calling the newer
+        // API shape directly.
+        const source = (args.source as string) ?? (args.content as string) ?? "";
+        const position =
+          (args.position as string | number | null | undefined) ??
+          (args.after_cell_id as string | undefined);
+        const positionStr =
+          position === null || position === undefined ? undefined : String(position);
         return this.addCell(
           p,
           (args.cell_type as string) ?? "code",
-          (args.source as string) ?? "",
-          args.after_cell_id as string | undefined,
+          source,
+          positionStr,
         );
+      }
       case "update_cell":
-        return this.updateCell(p, args.cell_id as string, (args.source as string) ?? "");
+        return this.updateCell(
+          p,
+          args.cell_id as string,
+          (args.source as string) ?? (args.content as string) ?? "",
+        );
       case "delete_cell":
         return this.deleteCell(p, args.cell_id as string);
       case "move_cell":
