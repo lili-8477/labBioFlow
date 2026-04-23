@@ -336,6 +336,17 @@ export const useNotebookStore = defineStore('notebook', () => {
     cellStreamOutputs.value.set(cellId, [])
     lastExecutionError.value = null
 
+    // Flush any pending in-memory edits for this cell to disk BEFORE
+    // the adapter reads it back. Monaco's onDidChangeModelContent updates
+    // notebook.value.cells[i].source synchronously, but the actual
+    // update_cell RPC is debounced 500ms — so clicking Run within that
+    // window would execute the stale on-disk version.
+    const target = notebook.value?.cells.find((c) => c.id === cellId)
+    if (target && target.cell_type === 'code') {
+      const src = Array.isArray(target.source) ? target.source.join('') : (target.source ?? '')
+      await updateCell(cellId, src)
+    }
+
     try {
       const result = (await natsService.proxyToolset(
         'execute_cell',
