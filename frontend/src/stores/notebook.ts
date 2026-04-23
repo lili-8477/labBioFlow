@@ -607,8 +607,26 @@ export const useNotebookStore = defineStore('notebook', () => {
 
     if (output) {
       const existing = cellStreamOutputs.value.get(cellId) || []
-      existing.push(output)
-      cellStreamOutputs.value.set(cellId, [...existing])
+      // Merge consecutive stream outputs of the same name (stdout/stderr)
+      // into a single output — otherwise tools like tqdm that emit one
+      // iopub stream message per progress frame produce hundreds of
+      // stacked <pre> elements. Carriage-return collapsing in the view
+      // then cleans up the resulting single string into a live bar.
+      const last = existing[existing.length - 1]
+      if (
+        output.output_type === 'stream' &&
+        last &&
+        last.output_type === 'stream' &&
+        last.name === output.name
+      ) {
+        const prev = Array.isArray(last.text) ? last.text.join('') : (last.text ?? '')
+        const next = Array.isArray(output.text) ? output.text.join('') : (output.text ?? '')
+        last.text = prev + next
+        cellStreamOutputs.value.set(cellId, [...existing])
+      } else {
+        existing.push(output)
+        cellStreamOutputs.value.set(cellId, [...existing])
+      }
     }
   }
 
