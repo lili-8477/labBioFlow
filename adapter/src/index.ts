@@ -11,6 +11,7 @@
 //   HOME              default "/home/node"
 
 import { createHash } from "node:crypto";
+import { ChatsRepo } from "./chats-repo.js";
 import { NatsBus } from "./nats-bus.js";
 import { RpcRouter } from "./rpc.js";
 
@@ -40,6 +41,8 @@ async function main(): Promise<void> {
   const router = new RpcRouter({
     serviceId,
     workspaceRoot,
+    // TEMPORARY — Task 8 replaces this with a real ChatsRepo over a real pool.
+    chats: new ChatsRepo(undefined as unknown as import("pg").Pool, "stub-username"),
     home,
     defaultProjectCwd,
     publishStream: (streamId, ev) => bus.publishStream(streamId, ev),

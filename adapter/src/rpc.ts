@@ -1,20 +1,22 @@
 // RPC dispatch: maps frontend method names to handlers. The frontend contract
 // is pinned — see pantheon-frontend/src/stores/chat.ts for the list of calls.
 
+import crypto from "node:crypto";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { ChatsRepo } from "./chats-repo.js";
 import { runTurn } from "./claude.js";
 import { AbortRegistry, ChatMutexRegistry } from "./concurrency.js";
 import { FileManager } from "./fs-rpc.js";
 import { readSessionMessages } from "./history.js";
 import { KernelBridge, type IOPubEvent } from "./kernel.js";
 import { NotebookManager } from "./notebook-rpc.js";
-import { SessionStore } from "./sessions.js";
 import type { StreamEvent } from "./types.js";
 
 export interface RpcDeps {
   serviceId: string;
   workspaceRoot: string;
+  chats: ChatsRepo;
   home: string;
   defaultProjectCwd: string; // where `chat` runs by default (a project dir)
   publishStream: (streamId: string, ev: StreamEvent) => void;
@@ -27,7 +29,7 @@ export interface RpcDeps {
 }
 
 export class RpcRouter {
-  private sessions: SessionStore;
+  private chats: ChatsRepo;
   private files: FileManager;
   private notebooks: NotebookManager;
   private kernel: KernelBridge;
@@ -35,7 +37,7 @@ export class RpcRouter {
   private aborts = new AbortRegistry();
 
   constructor(private deps: RpcDeps) {
-    this.sessions = new SessionStore(deps.workspaceRoot);
+    this.chats = deps.chats;
     this.files = new FileManager(deps.workspaceRoot);
     // Kernel session_id = first 16 hex of service_id — stable per adapter.
     const kernelSessionId = `k_${deps.serviceId.slice(0, 16)}`;
@@ -119,20 +121,20 @@ export class RpcRouter {
       }
 
       case "list_chats": {
-        const chats = await this.sessions.list();
-        chats.sort((a, b) => (b.last_activity_date ?? "").localeCompare(a.last_activity_date ?? ""));
+        const chats = await this.chats.list();
         return { success: true, chats };
       }
 
       case "create_chat": {
-        const name = params.chat_name as string | undefined;
-        const s = await this.sessions.create(name);
-        return { success: true, chat_id: s.id };
+        const name = (params.chat_name as string | undefined) ?? "New chat";
+        const chatId = crypto.randomUUID();
+        await this.chats.create(chatId, name);
+        return { success: true, chat_id: chatId };
       }
 
       case "delete_chat": {
         const chatId = params.chat_id as string;
-        await this.sessions.delete(chatId);
+        await this.chats.delete(chatId);
         this.mutexes.delete(chatId);
         return { success: true };
       }
@@ -140,15 +142,15 @@ export class RpcRouter {
       case "update_chat_name": {
         const chatId = params.chat_id as string;
         const name = params.chat_name as string;
-        await this.sessions.update(chatId, { name });
+        await this.chats.updateName(chatId, name);
         return { success: true };
       }
 
       case "get_chat_messages": {
         const chatId = params.chat_id as string;
-        const sidecar = await this.sessions.read(chatId);
+        const chat = await this.chats.read(chatId);
         // Use the real SDK session UUID if we have one, else fall back to chat_id.
-        const sessionUuid = sidecar?.session_uuid ?? chatId;
+        const sessionUuid = chat?.session_id ?? chatId;
         const messages = await readSessionMessages(
           this.deps.home,
           this.deps.defaultProjectCwd,
@@ -181,7 +183,7 @@ export class RpcRouter {
       case "set_active_agent": {
         const chatId = (params.chat_name as string) || (params.chat_id as string);
         const agentName = params.agent_name as string;
-        await this.sessions.update(chatId, { active_agent: agentName });
+        await this.chats.setActiveAgent(chatId, agentName);
         return { success: true };
       }
 
@@ -217,8 +219,8 @@ export class RpcRouter {
   }
 
   private async runChat(chatId: string, prompt: string): Promise<unknown> {
-    const sidecar = await this.sessions.read(chatId);
-    if (!sidecar) throw new Error(`chat not found: ${chatId}`);
+    const chat = await this.chats.read(chatId);
+    if (!chat) throw new Error(`chat not found: ${chatId}`);
 
     const mutex = this.mutexes.get(chatId);
     const run = mutex.tryRun(async () => {
@@ -229,17 +231,17 @@ export class RpcRouter {
           prompt,
           cwd: this.deps.defaultProjectCwd,
           // Resume only if we've already captured a real SDK session UUID.
-          resumeSessionId: sidecar.session_uuid,
+          resumeSessionId: chat.session_id ?? undefined,
           signal: ac.signal,
           onEvent: (ev) => this.deps.publishStream(`chat_${chatId}`, ev),
           onSessionId: (sessionId) => {
             // Fire-and-forget — stash the real session UUID so next resume works.
-            this.sessions.update(chatId, { session_uuid: sessionId }).catch((e) => {
+            this.chats.setSessionUuid(chatId, sessionId).catch((e) => {
               console.warn(`[rpc] failed to stash session_uuid for ${chatId}:`, e);
             });
           },
         });
-        await this.sessions.touch(chatId);
+        await this.chats.touch(chatId);
       } finally {
         this.aborts.clear(chatId);
       }
