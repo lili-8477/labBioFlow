@@ -10,7 +10,10 @@ const statusLabel = computed(() => {
   if (s === 'idle') return 'Idle'
   if (s === 'starting') return 'Starting'
   if (s === 'dead') return 'Dead'
-  return 'Unknown'
+  // 'unknown' most commonly means the kernel hasn't spawned yet (lazy
+  // boot on first execute_cell). Show a softer label so it doesn't read
+  // as an error.
+  return 'Ready'
 })
 
 async function confirmAndRestart() {

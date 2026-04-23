@@ -257,13 +257,20 @@ export class NotebookManager {
   manageKernel(action: string): unknown {
     if (!this.kernel) {
       if (action === "status")
-        return { success: true, status: "dead", kernel_session_id: null };
+        return { success: true, status: "dead", kernel_status: "dead", kernel_session_id: null };
       if (action === "variables") return { success: true, variables: {} };
       return { success: false, error: "kernel bridge not configured" };
     }
     const sessionId = this.kernel.sessionId;
     if (action === "status") {
-      return { success: true, status: this.kernel.status, kernel_session_id: sessionId };
+      // Emit both field names: `kernel_status` is what the frontend reads;
+      // `status` is kept for any older/other consumer.
+      return {
+        success: true,
+        status: this.kernel.status,
+        kernel_status: this.kernel.status,
+        kernel_session_id: sessionId,
+      };
     }
     if (action === "interrupt") {
       this.kernel.interrupt();

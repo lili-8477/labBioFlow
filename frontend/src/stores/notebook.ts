@@ -375,7 +375,11 @@ export const useNotebookStore = defineStore('notebook', () => {
     } finally {
       executingCells.value.delete(cellId)
       if (executingCells.value.size === 0) {
-        kernelStatus.value = lastExecutionError.value ? 'unknown' : 'idle'
+        // Kernel is 'idle' after any completion regardless of whether the
+        // cell succeeded — a Python exception doesn't kill the kernel.
+        // The error itself is surfaced via lastExecutionError + the cell's
+        // error output, not by the kernel status label.
+        kernelStatus.value = 'idle'
       }
     }
   }
