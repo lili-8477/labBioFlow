@@ -60,6 +60,20 @@ describe("parseJsonlLine", () => {
     // Right shape, wrong chars (non-hex)
     expect(parseJsonlLine('{"type":"user","uuid":"zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz","sessionId":"11111111-1111-1111-1111-111111111111","timestamp":"2026-01-01T00:00:00Z","message":{}}')).toBeNull();
   });
+
+  it("parses an ai-title entry into a synthetic title ParsedEntry", () => {
+    const e = parseJsonlLine('{"type":"ai-title","sessionId":"88888888-8888-8888-8888-888888888888","aiTitle":"Figuring out scRNA-seq QC"}');
+    expect(e).not.toBeNull();
+    expect(e!.type).toBe("title");
+    expect(e!.sessionId).toBe("88888888-8888-8888-8888-888888888888");
+    expect(e!.title).toBe("Figuring out scRNA-seq QC");
+  });
+
+  it("rejects ai-title with missing aiTitle or bad sessionId", () => {
+    expect(parseJsonlLine('{"type":"ai-title","sessionId":"88888888-8888-8888-8888-888888888888"}')).toBeNull();
+    expect(parseJsonlLine('{"type":"ai-title","sessionId":"not-a-uuid","aiTitle":"x"}')).toBeNull();
+    expect(parseJsonlLine('{"type":"ai-title","sessionId":"88888888-8888-8888-8888-888888888888","aiTitle":""}')).toBeNull();
+  });
 });
 
 describe("parseJsonlBuffer", () => {

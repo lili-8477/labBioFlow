@@ -11,6 +11,7 @@ export interface SessionUpsert {
   first_active_candidate: string;
   last_active: string;
   is_sidechain: boolean;
+  title_candidate: string | null;
 }
 
 export interface TokenUsageRow {
@@ -59,13 +60,23 @@ export function projectEntries(entries: ParsedEntry[], meta: ProjectMeta): Proje
   const tokenRows: TokenUsageRow[] = [];
 
   for (const [sessionId, group] of bySession) {
-    let firstTs = group[0]!.timestamp;
-    let lastTs = group[0]!.timestamp;
+    // Start from the first non-title entry's timestamp (title entries have
+    // synthetic epoch-0 timestamps that must not pollute first_active/last_active).
+    const realEntries = group.filter((e) => e.type !== "title");
+    let firstTs = (realEntries[0] ?? group[0]!).timestamp;
+    let lastTs = (realEntries[0] ?? group[0]!).timestamp;
     let isSidechain = false;
     let model: string | null = null;
+    let titleCandidate: string | null = null;
+    let messageCount = 0;
     const delta = { input: 0, output: 0, cache_read: 0, cache_write: 0 };
 
     for (const e of group) {
+      if (e.type === "title") {
+        if (e.title) titleCandidate = e.title; // last non-null wins
+        continue;
+      }
+      messageCount++;
       if (e.timestamp < firstTs) firstTs = e.timestamp;
       if (e.timestamp > lastTs) lastTs = e.timestamp;
       if (e.isSidechain) isSidechain = true;
@@ -97,11 +108,12 @@ export function projectEntries(entries: ParsedEntry[], meta: ProjectMeta): Proje
       encoded_project_dir: meta.encodedProjectDir,
       project_display: meta.displayProjectPath,
       model,
-      message_count_delta: group.length,
+      message_count_delta: messageCount,
       token_usage_delta: delta,
       first_active_candidate: firstTs,
       last_active: lastTs,
       is_sidechain: isSidechain,
+      title_candidate: titleCandidate,
     });
   }
 

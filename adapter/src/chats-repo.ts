@@ -63,7 +63,7 @@ export class ChatsRepo {
     const r = await this.pool.query(
       `SELECT
          c.chat_id        AS id,
-         c.name           AS name,
+         COALESCE(NULLIF(c.name, 'New chat'), s.title, c.name) AS name,
          c.last_used_at   AS last_used_at,
          c.active_agent   AS active_agent,
          COALESCE(s.project_display, '') AS project_name

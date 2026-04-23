@@ -10,6 +10,7 @@ const BASE: ParsedEntry = {
   isSidechain: false,
   model: null,
   usage: null,
+  title: null,
 };
 
 const META = {
@@ -86,5 +87,30 @@ describe("projectEntries", () => {
     const r = projectEntries(entries, META);
     expect(r.sessionUpserts).toHaveLength(2);
     expect(r.sessionUpserts.map((u) => u.session_id).sort()).toEqual(["session-x", "session-y"]);
+  });
+
+  it("propagates title from an ai-title entry into SessionUpsert.title_candidate without inflating message_count", () => {
+    const entries: ParsedEntry[] = [
+      { ...BASE, uuid: "aa000000-0000-0000-0000-000000000001" },
+      {
+        ...BASE,
+        type: "title",
+        uuid: "00000000-0000-0000-0000-000000000000",
+        timestamp: "1970-01-01T00:00:00.000Z",
+        title: "Figuring out scRNA-seq QC",
+      },
+    ];
+    const r = projectEntries(entries, META);
+    expect(r.sessionUpserts).toHaveLength(1);
+    const up = r.sessionUpserts[0]!;
+    expect(up.title_candidate).toBe("Figuring out scRNA-seq QC");
+    expect(up.message_count_delta).toBe(1); // only the user entry counts
+    expect(up.first_active_candidate).toBe("2026-04-22T10:00:00.000Z"); // not 1970
+  });
+
+  it("returns empty title_candidate when no ai-title is present", () => {
+    const entries: ParsedEntry[] = [{ ...BASE, uuid: "bb000000-0000-0000-0000-000000000001" }];
+    const r = projectEntries(entries, META);
+    expect(r.sessionUpserts[0]!.title_candidate).toBeNull();
   });
 });

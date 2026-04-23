@@ -42,6 +42,7 @@ function upsert(overrides: Partial<SessionUpsert> = {}): SessionUpsert {
     first_active_candidate: "2026-04-22T10:00:00.000Z",
     last_active: "2026-04-22T10:00:00.000Z",
     is_sidechain: false,
+    title_candidate: null,
     ...overrides,
   };
 }

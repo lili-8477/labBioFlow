@@ -133,4 +133,35 @@ describe("ChatsRepo", () => {
     const list2 = await repo.list();
     expect(list2).toHaveLength(0);
   });
+
+  it("list prefers user-set name, falls back to session.title when name is generic", async () => {
+    const repo = new ChatsRepo(pool, "alice");
+    const genericChat = "11111111-1111-1111-1111-111111111111";
+    const renamedChat = "22222222-2222-2222-2222-222222222222";
+    const genericSession = "33333333-3333-3333-3333-333333333333";
+    const renamedSession = "44444444-4444-4444-4444-444444444444";
+
+    await repo.create(genericChat, "New chat");
+    await repo.setSessionUuid(genericChat, genericSession);
+    await pool.query(
+      `INSERT INTO sessions (session_id, username, encoded_project_dir, title)
+       VALUES ($1, 'alice', '-w', 'AI-derived title here')`,
+      [genericSession],
+    );
+
+    await new Promise((r) => setTimeout(r, 5));
+    await repo.create(renamedChat, "My pretty name");
+    await repo.setSessionUuid(renamedChat, renamedSession);
+    await pool.query(
+      `INSERT INTO sessions (session_id, username, encoded_project_dir, title)
+       VALUES ($1, 'alice', '-w', 'AI-derived unused title')`,
+      [renamedSession],
+    );
+
+    const list = await repo.list();
+    const renamed = list.find((c) => c.id === renamedChat);
+    const generic = list.find((c) => c.id === genericChat);
+    expect(renamed!.name).toBe("My pretty name");
+    expect(generic!.name).toBe("AI-derived title here");
+  });
 });

@@ -6,16 +6,17 @@ export interface TokenUsage {
 }
 
 export interface ParsedEntry {
-  type: "user" | "assistant";
-  uuid: string;
+  type: "user" | "assistant" | "title";
+  uuid: string;            // synthetic for title entries (see parseJsonlLine)
   sessionId: string;
-  timestamp: string;            // ISO-8601
+  timestamp: string;       // synthetic for title entries (see parseJsonlLine)
   isSidechain: boolean;
-  model: string | null;         // assistant only
-  usage: TokenUsage | null;     // assistant only
+  model: string | null;
+  usage: TokenUsage | null;
+  title: string | null;    // populated only when type === "title"
 }
 
-const INTERESTING = new Set(["user", "assistant"]);
+const INTERESTING = new Set(["user", "assistant", "ai-title"]);
 
 // Canonical UUID v1-v5 format: 8-4-4-4-12 lowercase/uppercase hex. We reject
 // non-UUID ids at the parser because `sessions.session_id` and
@@ -42,6 +43,26 @@ export function parseJsonlLine(line: string): ParsedEntry | null {
   }
   const type = obj.type;
   if (typeof type !== "string" || !INTERESTING.has(type)) return null;
+
+  // ai-title: { type: "ai-title", sessionId, aiTitle }. No uuid/timestamp;
+  // we synthesise stable values so the downstream shape is uniform.
+  if (type === "ai-title") {
+    const sessionId = obj.sessionId;
+    const aiTitle = obj.aiTitle;
+    if (typeof sessionId !== "string" || !UUID_RE.test(sessionId)) return null;
+    if (typeof aiTitle !== "string" || aiTitle.length === 0) return null;
+    return {
+      type: "title",
+      uuid: `00000000-0000-0000-0000-000000000000`,
+      sessionId,
+      timestamp: "1970-01-01T00:00:00.000Z",
+      isSidechain: false,
+      model: null,
+      usage: null,
+      title: aiTitle,
+    };
+  }
+
   const uuid = obj.uuid;
   const sessionId = obj.sessionId;
   const timestamp = obj.timestamp;
@@ -67,7 +88,7 @@ export function parseJsonlLine(line: string): ParsedEntry | null {
       }
     }
   }
-  return { type: type as ParsedEntry["type"], uuid, sessionId, timestamp, isSidechain, model, usage };
+  return { type: type as ParsedEntry["type"], uuid, sessionId, timestamp, isSidechain, model, usage, title: null };
 }
 
 export function parseJsonlBuffer(buf: string): ParsedEntry[] {
