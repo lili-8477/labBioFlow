@@ -97,6 +97,16 @@ export const useNotebookStore = defineStore('notebook', () => {
 
   async function openNotebook(path: string) {
     loading.value = true
+    // Each notebook has its own kernel and its own variable namespace —
+    // drop the previous notebook's per-kernel state immediately so the
+    // inspector doesn't briefly render stale rows during the switch.
+    if (filePath.value !== path) {
+      variables.value = {}
+      cellStreamOutputs.value.clear()
+      executingCells.value.clear()
+      kernelSessionId.value = null
+      kernelStatus.value = 'unknown'
+    }
     try {
       const result = (await natsService.proxyToolset(
         'read_notebook',
@@ -114,6 +124,7 @@ export const useNotebookStore = defineStore('notebook', () => {
         // Ask the backend for an active kernel session (if any) so we can
         // attach the IOPub stream before the user runs anything.
         await refreshKernelStatus()
+        await loadVariables()
       }
     } catch (e) {
       console.error('Failed to open notebook:', e)
@@ -534,11 +545,12 @@ export const useNotebookStore = defineStore('notebook', () => {
   // ─────────────────────────────────────────────────────────────────────
 
   async function loadVariables() {
-    if (!filePath.value) return
+    const path = filePath.value
+    if (!path) return
     try {
       const result = (await natsService.proxyToolset(
         'manage_kernel',
-        { notebook_path: filePath.value, action: 'variables' },
+        { notebook_path: path, action: 'variables' },
         'notebook',
       )) as {
         success: boolean
@@ -556,6 +568,8 @@ export const useNotebookStore = defineStore('notebook', () => {
           }
         >
       }
+      // Drop late responses for a notebook the user has already switched away from.
+      if (filePath.value !== path) return
       captureKernelSessionId(result)
       if (result?.success !== false && result?.variables) {
         const out: Record<string, VariableInfo> = {}
