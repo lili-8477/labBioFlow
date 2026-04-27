@@ -53,7 +53,7 @@ Examples:
 The script creates:
   hub/workspaces/<user>/               workspace root, bind-mounted at /workspace
   hub/workspaces/<user>/.env           ANTHROPIC_API_KEY for this user
-  hub/workspaces/<user>/.pantheon/     user-level .claude/ bind sources (skills, agents, chats)
+  hub/workspaces/<user>/.claude/       user-level bind sources (skills, agents, chats, claude-projects)
   hub/workspaces/<user>/projects/      project folders
 
 And spins a container named "claude-bioflow-<user>" on the bioflow-net network.
@@ -112,15 +112,15 @@ echo "=== Adding user: ${USERNAME} ==="
 
 # --- 1. Workspace + config scaffolding --------------------------------------
 echo "[1/4] Creating workspace at ${WORKSPACE}"
-mkdir -p "${WORKSPACE}/.pantheon/skills" \
-         "${WORKSPACE}/.pantheon/agents" \
-         "${WORKSPACE}/.pantheon/chats" \
-         "${WORKSPACE}/.pantheon/claude-projects" \
+mkdir -p "${WORKSPACE}/.claude/skills" \
+         "${WORKSPACE}/.claude/agents" \
+         "${WORKSPACE}/.claude/chats" \
+         "${WORKSPACE}/.claude/claude-projects" \
          "${WORKSPACE}/local_projects"
 
 # Seed a minimal Claude Code settings file so the CLI has sensible defaults.
-if [[ ! -f "${WORKSPACE}/.pantheon/settings.json" ]]; then
-    cat > "${WORKSPACE}/.pantheon/settings.json" <<'JSON'
+if [[ ! -f "${WORKSPACE}/.claude/settings.json" ]]; then
+    cat > "${WORKSPACE}/.claude/settings.json" <<'JSON'
 {
   "$schema": "https://claude.ai/schemas/settings.json",
   "model": "claude-sonnet-4-6"
@@ -131,11 +131,18 @@ fi
 # Shared dirs — created on demand by the first user provisioning.
 mkdir -p "${SHARED_DIR}/reference" "${SHARED_DIR}/projects" "${SHARED_DIR}/skills"
 
-# Bootstrap the top-level CLAUDE.md into the user workspace if shared has one
-# and the user doesn't already have their own. Claude Code auto-discovers
-# CLAUDE.md walking up from the cwd, so this is a good nudge for skill use.
-if [[ -f "${SHARED_DIR}/CLAUDE.md" && ! -f "${WORKSPACE}/CLAUDE.md" ]]; then
-    cp "${SHARED_DIR}/CLAUDE.md" "${WORKSPACE}/CLAUDE.md"
+# Seed a slim user CLAUDE.md that imports the shared base via Claude Code's
+# @<path> memory-import syntax. Shared content lives at /workspace/.bioflow/shared.md
+# (bind-mounted from hub/workspaces/shared/CLAUDE.md, see MOUNTS below) so
+# edits there flow live into every workspace. User-specific overrides go
+# below the import line — later text wins on conflicts.
+if [[ ! -f "${WORKSPACE}/CLAUDE.md" ]]; then
+    cat > "${WORKSPACE}/CLAUDE.md" <<EOF
+@/workspace/.bioflow/shared.md
+
+# ${USERNAME} — local overrides
+
+EOF
 fi
 
 # Per-user .env
@@ -180,18 +187,21 @@ MOUNTS=(
     # the nginx /download/ endpoint (which serves directly from the host dir)
     # maps the UI path 1:1 without special rewrites.
     -v "${WORKSPACE}/local_projects:/workspace/local_projects"
-    -v "${WORKSPACE}/.pantheon/chats:/workspace/.pantheon/chats"
+    -v "${WORKSPACE}/.claude/chats:/workspace/.claude/chats"
     -v "${WORKSPACE}/.env:/workspace/.env:ro"
     # Workspace-level instructions Claude Code auto-loads from cwd.
     -v "${WORKSPACE}/CLAUDE.md:/workspace/CLAUDE.md:ro"
+    # Shared CLAUDE.md, mounted live so org-wide edits propagate without
+    # touching per-user files. The user CLAUDE.md @-imports this path.
+    -v "${SHARED_DIR}/CLAUDE.md:/workspace/.bioflow/shared.md:ro"
     # Skills are split: per-user skills at skills-user, org-wide at skills-shared.
     # The entrypoint symlinks both into ~/.claude/skills/ so Claude Code
     # auto-discovers them. User skills win on name collisions.
-    -v "${WORKSPACE}/.pantheon/skills:/home/node/.claude/skills-user"
-    -v "${WORKSPACE}/.pantheon/agents:/home/node/.claude/agents"
-    -v "${WORKSPACE}/.pantheon/settings.json:/home/node/.claude/settings.json"
+    -v "${WORKSPACE}/.claude/skills:/home/node/.claude/skills-user"
+    -v "${WORKSPACE}/.claude/agents:/home/node/.claude/agents"
+    -v "${WORKSPACE}/.claude/settings.json:/home/node/.claude/settings.json"
     # Persist Claude Code session JSONLs across container recreations.
-    -v "${WORKSPACE}/.pantheon/claude-projects:/home/node/.claude/projects"
+    -v "${WORKSPACE}/.claude/claude-projects:/home/node/.claude/projects"
     -v "${SHARED_DIR}/reference:/workspace/shared/reference:ro"
     -v "${SHARED_DIR}/projects:/workspace/shared/projects"
     -v "${SHARED_DIR}/skills:/home/node/.claude/skills-shared:ro"
@@ -261,5 +271,5 @@ Frontend connection:
   Username:      ${USERNAME}  (HTTP Basic)
 
 Drop skills into:
-  ${WORKSPACE}/.pantheon/skills/<name>/SKILL.md
+  ${WORKSPACE}/.claude/skills/<name>/SKILL.md
 SUMMARY

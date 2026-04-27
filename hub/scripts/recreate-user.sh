@@ -64,13 +64,14 @@ docker run -d \
     -e "SIDECAR_IMPORT_ON_BOOT=1" \
     -e "HOME=/home/node" \
     -v "${WORKSPACE}/local_projects:/workspace/local_projects" \
-    -v "${WORKSPACE}/.pantheon/chats:/workspace/.pantheon/chats" \
+    -v "${WORKSPACE}/.claude/chats:/workspace/.claude/chats" \
     -v "${WORKSPACE}/.env:/workspace/.env:ro" \
     -v "${WORKSPACE}/CLAUDE.md:/workspace/CLAUDE.md:ro" \
-    -v "${WORKSPACE}/.pantheon/skills:/home/node/.claude/skills-user" \
-    -v "${WORKSPACE}/.pantheon/agents:/home/node/.claude/agents" \
-    -v "${WORKSPACE}/.pantheon/settings.json:/home/node/.claude/settings.json" \
-    -v "${WORKSPACE}/.pantheon/claude-projects:/home/node/.claude/projects" \
+    -v "${SHARED_DIR}/CLAUDE.md:/workspace/.bioflow/shared.md:ro" \
+    -v "${WORKSPACE}/.claude/skills:/home/node/.claude/skills-user" \
+    -v "${WORKSPACE}/.claude/agents:/home/node/.claude/agents" \
+    -v "${WORKSPACE}/.claude/settings.json:/home/node/.claude/settings.json" \
+    -v "${WORKSPACE}/.claude/claude-projects:/home/node/.claude/projects" \
     -v "${SHARED_DIR}/reference:/workspace/shared/reference:ro" \
     -v "${SHARED_DIR}/projects:/workspace/shared/projects" \
     -v "${SHARED_DIR}/skills:/home/node/.claude/skills-shared:ro" \
