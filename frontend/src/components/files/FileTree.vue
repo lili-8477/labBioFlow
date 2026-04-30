@@ -15,6 +15,13 @@ const emit = defineEmits<{
 const files = useFileStore()
 const uploads = useUploadsStore()
 
+const INTERNAL_PATH_MIME = 'application/x-bioflow-path'
+
+function isAncestorOrSelf(maybeAncestor: string, descendant: string): boolean {
+  if (maybeAncestor === descendant) return true
+  return descendant.startsWith(maybeAncestor + '/')
+}
+
 // State: which dirs are expanded, their loaded children, loading status
 const expandedDirs = ref<Set<string>>(new Set())
 const dirChildren = ref<Map<string, FileEntry[]>>(new Map())
@@ -296,12 +303,22 @@ function openFilePicker() {
   fileInput.value?.click()
 }
 
+function onRowDragStart(ev: DragEvent, fe: FlatEntry) {
+  if (!ev.dataTransfer) return
+  ev.dataTransfer.setData(INTERNAL_PATH_MIME, fe.path)
+  ev.dataTransfer.setData('text/plain', fe.path)
+  ev.dataTransfer.effectAllowed = 'move'
+}
+
 function onDragOver(e: DragEvent, path: string | null) {
-  // Only react if the drag includes files.
-  if (!e.dataTransfer || !Array.from(e.dataTransfer.types).includes('Files')) return
+  if (!e.dataTransfer) return
+  const types = Array.from(e.dataTransfer.types)
+  const hasFiles = types.includes('Files')
+  const hasInternal = types.includes(INTERNAL_PATH_MIME)
+  if (!hasFiles && !hasInternal) return
   e.preventDefault()
-  e.dataTransfer.dropEffect = 'copy'
-  isDraggingFiles.value = true
+  e.dataTransfer.dropEffect = hasInternal ? 'move' : 'copy'
+  isDraggingFiles.value = hasFiles
   dragOverPath.value = path
 }
 
@@ -319,11 +336,54 @@ function onDragLeave(e: DragEvent, path: string | null) {
 
 function onDrop(e: DragEvent, path: string | null) {
   e.preventDefault()
+  const dt = e.dataTransfer
   dragOverPath.value = null
   isDraggingFiles.value = false
-  const fileList = e.dataTransfer?.files
+  if (!dt) return
+
+  const types = Array.from(dt.types)
+
+  // 1) Internal move
+  if (types.includes(INTERNAL_PATH_MIME)) {
+    const sourcePath = dt.getData(INTERNAL_PATH_MIME)
+    if (!sourcePath) return
+    if (path === null) return  // drop on empty pane: not a valid move target
+
+    const target = visibleEntries.value.find(fe => fe.path === path)
+    if (!target) return
+    const targetDir = target.entry.type === 'directory'
+      ? target.path
+      : (target.path.includes('/') ? target.path.slice(0, target.path.lastIndexOf('/')) : '')
+
+    const sourceParent = sourcePath.includes('/')
+      ? sourcePath.slice(0, sourcePath.lastIndexOf('/'))
+      : ''
+
+    if (targetDir === sourceParent) return
+    if (isAncestorOrSelf(sourcePath, targetDir)) return
+
+    const basename = sourcePath.split('/').pop() ?? sourcePath
+    const newPath = targetDir ? `${targetDir}/${basename}` : basename
+
+    void doMove(sourcePath, newPath)
+    return
+  }
+
+  // 2) OS-file upload (existing behavior)
+  const fileList = dt.files
   if (!fileList || fileList.length === 0) return
   startUploads(fileList, dropDirFor(path))
+}
+
+async function doMove(from: string, to: string) {
+  const result = await files.movePath(from, to)
+  if (!result.ok) {
+    showTreeError(`Move failed: ${result.error}`)
+    return
+  }
+  dirChildren.value.clear()
+  expandedDirs.value.clear()
+  await files.loadTree()
 }
 
 function onCancelUpload(id: string) {
@@ -395,6 +455,8 @@ function fmtBytes(n: number): string {
         class="entry-row"
         :class="{ 'drag-over': dragOverPath === fe.path }"
         :style="{ paddingLeft: (12 + fe.depth * 16) + 'px' }"
+        draggable="true"
+        @dragstart="onRowDragStart($event, fe)"
         @click="handleClick(fe)"
         @contextmenu="openCtxMenuAt($event, fe)"
         @dragover.stop="onDragOver($event, fe.path)"
