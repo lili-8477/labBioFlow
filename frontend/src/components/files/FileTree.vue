@@ -95,9 +95,7 @@ async function commitRename(fe: FlatEntry) {
       return
     }
     cancelRename()
-    dirChildren.value.clear()
-    expandedDirs.value.clear()
-    await files.loadTree()
+    await reloadTreeFromRoot()
   } finally {
     renameInFlight = false
   }
@@ -231,9 +229,7 @@ function startNewItemIn(fe: FlatEntry, kind: 'file' | 'directory') {
 async function handleDelete(fe: FlatEntry) {
   if (confirm(`Delete ${fe.entry.name}?`)) {
     await files.deletePath(fe.path)
-    dirChildren.value.clear()
-    expandedDirs.value.clear()
-    await files.loadTree()
+    await reloadTreeFromRoot()
   }
 }
 
@@ -245,10 +241,14 @@ function downloadUrl(filePath: string): string {
   return `/download/${segs.join('/')}`
 }
 
-function refresh() {
+async function reloadTreeFromRoot() {
   dirChildren.value.clear()
   expandedDirs.value.clear()
-  files.loadTree()
+  await files.loadTree()
+}
+
+function refresh() {
+  void reloadTreeFromRoot()
 }
 
 /** Workspace-relative directory that this drop target represents.
@@ -381,9 +381,7 @@ async function doMove(from: string, to: string) {
     showTreeError(`Move failed: ${result.error}`)
     return
   }
-  dirChildren.value.clear()
-  expandedDirs.value.clear()
-  await files.loadTree()
+  await reloadTreeFromRoot()
 }
 
 function onCancelUpload(id: string) {
