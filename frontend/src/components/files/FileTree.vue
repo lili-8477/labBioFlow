@@ -63,10 +63,10 @@ const renameInput = ref('')
 
 const moveSource = ref<string | null>(null)
 
-// When set, the upload-destination picker is open and tracks which input
-// to click after the user confirms ('file' = single-file picker, 'directory'
-// = folder picker).
-const uploadKind = ref<'file' | 'directory' | null>(null)
+// Modal-open state for the upload destination picker. The modal itself
+// decides whether the user wants to upload files or a folder; we stay
+// out of that choice until the modal emits.
+const uploadModalOpen = ref<boolean>(false)
 
 function openMoveTo(fe: FlatEntry) {
   moveSource.value = fe.path
@@ -325,20 +325,13 @@ function onPickFiles(e: Event) {
 }
 
 function openFilePicker() {
-  uploadKind.value = 'file'
+  uploadModalOpen.value = true
 }
 
-function openDirPicker() {
-  uploadKind.value = 'directory'
-}
-
-async function onUploadDestPick(dir: string) {
-  const kind = uploadKind.value
-  uploadKind.value = null
-  if (!kind) return
+async function onUploadDestPick(dir: string, kind: 'file' | 'directory') {
+  uploadModalOpen.value = false
   uploadTargetDir.value = dir
-  // Wait one tick so the modal is fully unmounted before opening the OS dialog
-  // (some browsers/extensions misbehave if a click() races with overlay teardown).
+  // Wait one tick so the modal is fully unmounted before opening the OS dialog.
   await new Promise(resolve => setTimeout(resolve, 0))
   if (kind === 'file') {
     fileInput.value?.click()
@@ -487,7 +480,6 @@ function fmtBytes(n: number): string {
       <div class="tree-actions">
         <button class="icon-btn" @click="refresh()" title="Refresh">&#8635;</button>
         <button class="icon-btn" @click="openFilePicker()" title="Upload (max 2 GB)">&#x2B06;</button>
-        <button class="icon-btn" @click="openDirPicker()" title="Upload folder">&#128194;</button>
         <button class="icon-btn" @click="showNewInput = true; newItemType = 'file'" title="New File">+</button>
         <button class="icon-btn" @click="showNewInput = true; newItemType = 'directory'" title="New Folder">&#128193;</button>
       </div>
@@ -604,9 +596,9 @@ function fmtBytes(n: number): string {
     />
 
     <UploadDestModal
-      v-if="uploadKind"
+      v-if="uploadModalOpen"
       @pick="onUploadDestPick"
-      @close="uploadKind = null"
+      @close="uploadModalOpen = false"
     />
 
     <div v-if="treeError" class="tree-error" role="alert">

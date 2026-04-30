@@ -4,7 +4,7 @@ import { natsService } from '@/services/nats'
 import { joinPath } from '@/utils/path'
 
 const emit = defineEmits<{
-  (e: 'pick', dir: string): void
+  (e: 'pick', dir: string, kind: 'file' | 'directory'): void
   (e: 'close'): void
 }>()
 
@@ -73,8 +73,11 @@ function pickRoot() {
   selected.value = ''
 }
 
-function confirm() {
-  emit('pick', selected.value)
+function confirmFile() {
+  emit('pick', selected.value, 'file')
+}
+function confirmFolder() {
+  emit('pick', selected.value, 'directory')
 }
 
 function flatten(nodes: DirNode[], depth: number, out: { node: DirNode; depth: number }[]) {
@@ -125,7 +128,8 @@ const selectedLabel = computed(() => selected.value === '' ? '/ (workspace root)
       <div class="modal-footer">
         <span class="dest-label">Destination: <strong>{{ selectedLabel }}</strong></span>
         <button class="btn" @click="emit('close')">Cancel</button>
-        <button class="btn btn-primary" @click="confirm()">Upload here</button>
+        <button class="btn" @click="confirmFile()" title="Pick files to upload">Upload files…</button>
+        <button class="btn btn-primary" @click="confirmFolder()" title="Pick a folder to upload (preserves subdir structure)">Upload folder…</button>
       </div>
     </div>
   </div>
