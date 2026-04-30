@@ -21,6 +21,24 @@ const uploads = useUploadsStore()
 
 const INTERNAL_PATH_MIME = 'application/x-bioflow-path'
 
+// Top-level bind-mount points in the user's container. The host filesystem
+// allows renames inside them, but the mount points themselves are pinned by
+// the kernel — fs.rename / fs.rm against them returns EBUSY. Short-circuit
+// rename / move / delete with a friendly message so users don't see the
+// raw EBUSY in the tree-error strip.
+const PROTECTED_MOUNT_POINTS = new Set<string>([
+  '.claude',
+  '.bioflow',
+  '.env',
+  'CLAUDE.md',
+  'local_projects',
+  'shared',
+])
+
+function isProtectedMountPoint(path: string): boolean {
+  return PROTECTED_MOUNT_POINTS.has(path)
+}
+
 // State: which dirs are expanded, their loaded children, loading status
 const expandedDirs = ref<Set<string>>(new Set())
 const dirChildren = ref<Map<string, FileEntry[]>>(new Map())
@@ -96,6 +114,11 @@ async function commitRename(fe: FlatEntry) {
   if (renameInFlight) return
   const newName = renameInput.value.trim()
   if (!newName || newName === fe.entry.name) {
+    cancelRename()
+    return
+  }
+  if (isProtectedMountPoint(fe.path)) {
+    showTreeError(`Cannot rename "${fe.path}" — it's a workspace mount point`)
     cancelRename()
     return
   }
@@ -250,6 +273,10 @@ function startNewItemIn(fe: FlatEntry, kind: 'file' | 'directory') {
 }
 
 async function handleDelete(fe: FlatEntry) {
+  if (isProtectedMountPoint(fe.path)) {
+    showTreeError(`Cannot delete "${fe.path}" — it's a workspace mount point`)
+    return
+  }
   if (confirm(`Delete ${fe.entry.name}?`)) {
     await files.deletePath(fe.path)
     await reloadTreeFromRoot()
@@ -443,6 +470,10 @@ function onDrop(e: DragEvent, path: string | null) {
 }
 
 async function doMove(from: string, to: string) {
+  if (isProtectedMountPoint(from)) {
+    showTreeError(`Cannot move "${from}" — it's a workspace mount point`)
+    return
+  }
   const result = await files.movePath(from, to)
   if (!result.ok) {
     showTreeError(`Move failed: ${result.error}`)
