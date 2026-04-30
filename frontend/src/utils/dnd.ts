@@ -14,7 +14,7 @@ interface FileSystemEntryLike {
   isDirectory: boolean
   name: string
   file?: (cb: (f: File) => void, err?: (e: Error) => void) => void
-  createReader?: () => { readEntries: (cb: (entries: FileSystemEntryLike[]) => void) => void }
+  createReader?: () => { readEntries: (cb: (entries: FileSystemEntryLike[]) => void, err?: (e: Error) => void) => void }
 }
 
 export async function walkDataTransferItems(items: DataTransferItemList): Promise<DroppedFile[]> {
@@ -39,10 +39,14 @@ export async function walkDataTransferItems(items: DataTransferItemList): Promis
 async function walkEntry(entry: FileSystemEntryLike, prefix: string, out: DroppedFile[]): Promise<void> {
   const here = prefix ? `${prefix}/${entry.name}` : entry.name
   if (entry.isFile && entry.file) {
-    const file = await new Promise<File>((resolve, reject) => {
-      entry.file!((f) => resolve(f), (e) => reject(e))
-    })
-    out.push({ file, relativePath: here })
+    try {
+      const file = await new Promise<File>((resolve, reject) => {
+        entry.file!((f) => resolve(f), (e) => reject(e))
+      })
+      out.push({ file, relativePath: here })
+    } catch (e) {
+      console.error('walkDataTransferItems: failed to read file', here, e)
+    }
     return
   }
   if (entry.isDirectory && entry.createReader) {
@@ -50,9 +54,17 @@ async function walkEntry(entry: FileSystemEntryLike, prefix: string, out: Droppe
     // readEntries returns at most ~100 entries per call; loop until empty.
     let batch: FileSystemEntryLike[] = []
     do {
-      batch = await new Promise<FileSystemEntryLike[]>((resolve) => {
-        reader.readEntries((es) => resolve(es))
-      })
+      try {
+        batch = await new Promise<FileSystemEntryLike[]>((resolve, reject) => {
+          reader.readEntries(
+            (es) => resolve(es),
+            (err: Error) => reject(err),
+          )
+        })
+      } catch (e) {
+        console.error('walkDataTransferItems: failed to read directory', here, e)
+        break
+      }
       for (const child of batch) {
         await walkEntry(child, here, out)
       }
