@@ -302,14 +302,18 @@ function refresh() {
 }
 
 /** Workspace-relative directory that this drop target represents.
- *  null path = the empty tree-content pane → workspace root. */
+ *  null path = the empty tree-content pane → default writable subtree.
+ *  The upload server only allows writes under `local_projects/`, so
+ *  workspace root would 403. Default new drops there too. */
+const DEFAULT_DROP_DIR = 'local_projects'
+
 function dropDirFor(path: string | null): string {
-  if (path === null) return ''
+  if (path === null) return DEFAULT_DROP_DIR
   // If the row is a directory, drop into it. If it's a file, drop into its parent.
   const child = visibleEntries.value.find(fe => fe.path === path)
-  if (!child) return ''
+  if (!child) return DEFAULT_DROP_DIR
   if (child.entry.type === 'directory') return path
-  return parentOf(path)
+  return parentOf(path) || DEFAULT_DROP_DIR
 }
 
 function refreshAfterUpload(destDir: string) {
