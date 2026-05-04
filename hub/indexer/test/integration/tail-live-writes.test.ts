@@ -36,7 +36,7 @@ afterAll(async () => {
 
 async function setupFile(): Promise<{ full: string; root: string }> {
   root = await mkdtemp(path.join(os.tmpdir(), "indexer-"));
-  const dir = path.join(root, "alice", ".pantheon", "claude-projects", "-w");
+  const dir = path.join(root, "alice", ".claude", "claude-projects", "-w");
   await mkdir(dir, { recursive: true });
   const full = path.join(dir, `${SID}.jsonl`);
   await writeFile(full, "");

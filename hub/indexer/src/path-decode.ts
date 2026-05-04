@@ -11,7 +11,7 @@ export interface ResolvedJsonlPath {
  * Resolve a watched JSONL path into its trust-critical components.
  *
  * Expected layout (matches existing add-user.sh bind-mount):
- *   <watchRoot>/<username>/.pantheon/claude-projects/<encoded>/<sessionId>.jsonl
+ *   <watchRoot>/<username>/.claude/claude-projects/<encoded>/<sessionId>.jsonl
  *
  * Username is taken from the watch-root-relative path prefix — never from the
  * encoded project directory name. The decoded project path is lossy (real
@@ -27,13 +27,13 @@ export function resolveJsonlPath(
 
   const rel = normFull.slice(normRoot.length + 1);
   const parts = rel.split(path.sep);
-  // username / .pantheon / claude-projects / encoded / sessionId.jsonl
+  // username / .claude / claude-projects / encoded / sessionId.jsonl
   if (parts.length !== 5) return null;
   if (parts.some((p) => p === "" || p === "..")) return null;
-  const [username, dotPantheon, cp, encodedProjectDir, file] = parts as [
+  const [username, dotClaude, cp, encodedProjectDir, file] = parts as [
     string, string, string, string, string,
   ];
-  if (dotPantheon !== ".pantheon") return null;
+  if (dotClaude !== ".claude") return null;
   if (cp !== "claude-projects") return null;
   if (!file.endsWith(".jsonl")) return null;
   const sessionId = file.slice(0, -".jsonl".length);

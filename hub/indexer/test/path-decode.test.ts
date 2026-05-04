@@ -7,7 +7,7 @@ describe("resolveJsonlPath", () => {
   it("extracts username, encoded dir, sessionId", () => {
     const r = resolveJsonlPath(
       ROOT,
-      "/workspaces/alice/.pantheon/claude-projects/-workspace-pbmc3k/abc-def.jsonl",
+      "/workspaces/alice/.claude/claude-projects/-workspace-pbmc3k/abc-def.jsonl",
     );
     expect(r).not.toBeNull();
     expect(r!.username).toBe("alice");
@@ -19,20 +19,20 @@ describe("resolveJsonlPath", () => {
   it("handles usernames with hyphens", () => {
     const r = resolveJsonlPath(
       ROOT,
-      "/workspaces/ada-lovelace/.pantheon/claude-projects/-w/s.jsonl",
+      "/workspaces/ada-lovelace/.claude/claude-projects/-w/s.jsonl",
     );
     expect(r!.username).toBe("ada-lovelace");
   });
 
   it("rejects paths outside watch root", () => {
     expect(
-      resolveJsonlPath(ROOT, "/tmp/alice/.pantheon/claude-projects/-w/s.jsonl"),
+      resolveJsonlPath(ROOT, "/tmp/alice/.claude/claude-projects/-w/s.jsonl"),
     ).toBeNull();
   });
 
   it("rejects path traversal via ..", () => {
     expect(
-      resolveJsonlPath(ROOT, "/workspaces/../etc/.pantheon/claude-projects/-w/s.jsonl"),
+      resolveJsonlPath(ROOT, "/workspaces/../etc/.claude/claude-projects/-w/s.jsonl"),
     ).toBeNull();
   });
 
@@ -41,14 +41,14 @@ describe("resolveJsonlPath", () => {
       resolveJsonlPath(ROOT, "/workspaces/alice/other-dir/foo/s.jsonl"),
     ).toBeNull();
     expect(
-      resolveJsonlPath(ROOT, "/workspaces/alice/.pantheon/wrong/-w/s.jsonl"),
+      resolveJsonlPath(ROOT, "/workspaces/alice/.claude/wrong/-w/s.jsonl"),
     ).toBeNull();
   });
 
   it("derives sessionId from filename stem, not from internals", () => {
     const r = resolveJsonlPath(
       ROOT,
-      "/workspaces/u/.pantheon/claude-projects/-p/f8e3b6c4-1234-5678-9abc-def012345678.jsonl",
+      "/workspaces/u/.claude/claude-projects/-p/f8e3b6c4-1234-5678-9abc-def012345678.jsonl",
     );
     expect(r!.sessionId).toBe("f8e3b6c4-1234-5678-9abc-def012345678");
   });

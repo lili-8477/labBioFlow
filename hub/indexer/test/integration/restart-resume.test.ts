@@ -32,7 +32,7 @@ describe("restart-resume", () => {
   it("N writes, interrupted run, M more writes → N+M tokens, no dupes", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "indexer-rr-"));
     const SID = "cccccccc-cccc-cccc-cccc-cccccccccccc";
-    const dir = path.join(root, "bob", ".pantheon", "claude-projects", "-w");
+    const dir = path.join(root, "bob", ".claude", "claude-projects", "-w");
     await mkdir(dir, { recursive: true });
     const full = path.join(dir, `${SID}.jsonl`);
     await writeFile(full, "");
@@ -71,7 +71,7 @@ describe("restart-resume", () => {
   it("offset table forces dedupe if offset is manually reset mid-file", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "indexer-rr2-"));
     const SID = "dddddddd-dddd-dddd-dddd-dddddddddddd";
-    const dir = path.join(root, "carol", ".pantheon", "claude-projects", "-w");
+    const dir = path.join(root, "carol", ".claude", "claude-projects", "-w");
     await mkdir(dir, { recursive: true });
     const full = path.join(dir, `${SID}.jsonl`);
     await writeFile(full, "");

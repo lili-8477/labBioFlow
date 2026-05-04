@@ -41,7 +41,7 @@ describe("concurrent files", () => {
       // Valid UUID: 8-4-4-4-12 hex chars. Use the index byte to make each unique.
       const SID = `aaaa${idx}aa-aaaa-aaaa-aaaa-aaaaaaaaaaaa`;
       const user = `user${idx}`;
-      const dir = path.join(root, user, ".pantheon", "claude-projects", "-w");
+      const dir = path.join(root, user, ".claude", "claude-projects", "-w");
       await mkdir(dir, { recursive: true });
       const full = path.join(dir, `${SID}.jsonl`);
       const lines = [];

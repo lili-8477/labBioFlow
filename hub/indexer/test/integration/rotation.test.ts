@@ -33,7 +33,7 @@ describe("rotation", () => {
   it("resets offset when the file is replaced (inode changes)", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "indexer-rot-"));
     const SID = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
-    const dir = path.join(root, "dan", ".pantheon", "claude-projects", "-w");
+    const dir = path.join(root, "dan", ".claude", "claude-projects", "-w");
     await mkdir(dir, { recursive: true });
     const full = path.join(dir, `${SID}.jsonl`);
 
@@ -72,7 +72,7 @@ describe("rotation", () => {
   it("resets offset when the file is truncated (size < stored offset)", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "indexer-trunc-"));
     const SID = "ffffffff-ffff-ffff-ffff-ffffffffffff";
-    const dir = path.join(root, "eve", ".pantheon", "claude-projects", "-w");
+    const dir = path.join(root, "eve", ".claude", "claude-projects", "-w");
     await mkdir(dir, { recursive: true });
     const full = path.join(dir, `${SID}.jsonl`);
 

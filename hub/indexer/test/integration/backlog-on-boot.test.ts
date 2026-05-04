@@ -40,7 +40,7 @@ describe("backlog on boot", () => {
       // Valid UUIDs: 8-4-4-4-12 hex chars each.
       const SID = `bbbb${idx}bb-bbbb-bbbb-bbbb-bbbbbbbbbbbb`;
       const user = `u${idx}`;
-      const dir = path.join(root, user, ".pantheon", "claude-projects", "-w");
+      const dir = path.join(root, user, ".claude", "claude-projects", "-w");
       await mkdir(dir, { recursive: true });
       const full = path.join(dir, `${SID}.jsonl`);
       const lines: string[] = [];

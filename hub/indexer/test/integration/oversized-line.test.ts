@@ -32,7 +32,7 @@ describe("oversized-line skipping", () => {
   it("skips past a single line larger than maxPassBytes and ingests subsequent lines", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "indexer-os-"));
     const SID = "aaaaaaaa-0000-0000-0000-000000000abc";
-    const dir = path.join(root, "hank", ".pantheon", "claude-projects", "-w");
+    const dir = path.join(root, "hank", ".claude", "claude-projects", "-w");
     await mkdir(dir, { recursive: true });
     const full = path.join(dir, `${SID}.jsonl`);
 
@@ -94,7 +94,7 @@ describe("oversized-line skipping", () => {
   it("leaves offset stuck when the only content is a partial in-progress line at EOF", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "indexer-partial-"));
     const SID = "bbbbbbbb-0000-0000-0000-000000000abc";
-    const dir = path.join(root, "ivy", ".pantheon", "claude-projects", "-w");
+    const dir = path.join(root, "ivy", ".claude", "claude-projects", "-w");
     await mkdir(dir, { recursive: true });
     const full = path.join(dir, `${SID}.jsonl`);
 
