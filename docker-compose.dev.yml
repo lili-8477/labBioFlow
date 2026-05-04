@@ -44,10 +44,10 @@ services:
         required: false
     volumes:
       - ./hub/workspaces/devuser/projects:/workspace/projects
-      - ./hub/workspaces/devuser/.pantheon/chats:/workspace/.pantheon/chats
-      - ./hub/workspaces/devuser/.pantheon/skills:/home/node/.claude/skills
-      - ./hub/workspaces/devuser/.pantheon/agents:/home/node/.claude/agents
-      - ./hub/workspaces/devuser/.pantheon/settings.json:/home/node/.claude/settings.json
+      - ./hub/workspaces/devuser/.claude/chats:/workspace/.claude/chats
+      - ./hub/workspaces/devuser/.claude/skills:/home/node/.claude/skills
+      - ./hub/workspaces/devuser/.claude/agents:/home/node/.claude/agents
+      - ./hub/workspaces/devuser/.claude/settings.json:/home/node/.claude/settings.json
     working_dir: /workspace
     networks:
       - bioflow-dev-net

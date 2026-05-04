@@ -71,9 +71,9 @@ the username/password you chose.
 docker build -f image/Dockerfile -t claude-bioflow:dev .
 
 # Create a minimal devuser workspace.
-mkdir -p hub/workspaces/devuser/.pantheon/{skills,agents,chats}
+mkdir -p hub/workspaces/devuser/.claude/{skills,agents,chats,claude-projects}
 mkdir -p hub/workspaces/devuser/projects
-echo '{"model":"claude-sonnet-4-6"}' > hub/workspaces/devuser/.pantheon/settings.json
+echo '{"model":"claude-sonnet-4-6"}' > hub/workspaces/devuser/.claude/settings.json
 echo "ANTHROPIC_API_KEY=sk-ant-..." > hub/workspaces/devuser/.env
 
 docker compose -f docker-compose.dev.yml up -d
@@ -92,8 +92,8 @@ Skills are plain markdown. Claude Code auto-discovers anything under
 `~/.claude/skills/` at turn-start.
 
 ```bash
-mkdir -p hub/workspaces/alice/.pantheon/skills/scrna-qc
-cat > hub/workspaces/alice/.pantheon/skills/scrna-qc/SKILL.md <<'SKILL'
+mkdir -p hub/workspaces/alice/.claude/skills/scrna-qc
+cat > hub/workspaces/alice/.claude/skills/scrna-qc/SKILL.md <<'SKILL'
 ---
 name: scrna-qc
 description: Run standard scanpy QC on an AnnData object
@@ -149,7 +149,7 @@ drive the frontend against a test user and verify each scenario:
 6. Reload the page → `list_chats` + `get_chat_messages` reconstruct the timeline from session JSONL + sidecar.
 7. `delete_chat` removes JSONL + sidecar.
 8. `stop_chat` during streaming aborts cleanly; next `chat` resumes the same session.
-9. Drop a `SKILL.md` into `hub/workspaces/<user>/.pantheon/skills/<name>/` → it appears at `/home/node/.claude/skills/` inside the container → invoking by name works.
+9. Drop a `SKILL.md` into `hub/workspaces/<user>/.claude/skills/<name>/` → it appears at `/home/node/.claude/skills/` inside the container → invoking by name works.
 10. `file_manager.list_files` (via `proxy_toolset`) returns the `/workspace/` tree.
 
 Then soak: 48h under representative load. Watch `pgrep -af claude` (stable),

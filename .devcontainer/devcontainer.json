@@ -7,9 +7,9 @@
   "remoteUser": "node",
   "workspaceFolder": "/workspace",
   "mounts": [
-    "source=${localWorkspaceFolder}/hub/workspaces/devuser/.pantheon/skills,target=/home/node/.claude/skills,type=bind",
-    "source=${localWorkspaceFolder}/hub/workspaces/devuser/.pantheon/agents,target=/home/node/.claude/agents,type=bind",
-    "source=${localWorkspaceFolder}/hub/workspaces/devuser/.pantheon/chats,target=/workspace/.pantheon/chats,type=bind"
+    "source=${localWorkspaceFolder}/hub/workspaces/devuser/.claude/skills,target=/home/node/.claude/skills,type=bind",
+    "source=${localWorkspaceFolder}/hub/workspaces/devuser/.claude/agents,target=/home/node/.claude/agents,type=bind",
+    "source=${localWorkspaceFolder}/hub/workspaces/devuser/.claude/chats,target=/workspace/.claude/chats,type=bind"
   ],
   "runArgs": [
     "--network=host"
