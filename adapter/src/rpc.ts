@@ -255,8 +255,8 @@ export class RpcRouter {
       case "chat": {
         const chatId = params.chat_id as string;
         const messageArr = params.message as Array<{ role: string; content: string }>;
-        const prompt = extractPrompt(messageArr);
-        return await this.runChat(chatId, prompt);
+        const { text, images } = extractPrompt(messageArr);
+        return await this.runChat(chatId, text, images);
       }
 
       case "proxy_toolset": {
@@ -277,7 +277,7 @@ export class RpcRouter {
     }
   }
 
-  private async runChat(chatId: string, prompt: string): Promise<unknown> {
+  private async runChat(chatId: string, prompt: string, images: ImageRef[] = []): Promise<unknown> {
     const chat = await this.chats.read(chatId);
     if (!chat) throw new Error(`chat not found: ${chatId}`);
 
@@ -288,6 +288,7 @@ export class RpcRouter {
         await runTurn({
           chatId,
           prompt,
+          images,
           cwd: this.deps.defaultProjectCwd,
           // Resume only if we've already captured a real SDK session UUID.
           resumeSessionId: chat.session_id ?? undefined,
@@ -314,10 +315,60 @@ export class RpcRouter {
   }
 }
 
-function extractPrompt(messages: Array<{ role: string; content: string }>): string {
+export interface ImageRef {
+  path: string;
+  mediaType: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+}
+
+// Allow-listed parent for any image path the frontend can attach. The frontend
+// can only POST uploads into this directory via the upload-http server, so any
+// path outside it is either a programming error or someone trying to read
+// CLAUDE.md / .env via a crafted [image:] line.
+const ATTACHMENT_PREFIX = "/workspace/local_projects/.chat-attachments/";
+
+const MEDIA_TYPE_BY_EXT: Record<string, ImageRef["mediaType"]> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+};
+
+const IMAGE_LINE_RE = /^\[image:\s*([^\]]+)\]\s*$/;
+
+/**
+ * Pull the most recent user message and split out any `[image: <path>]`
+ * lines into structured ImageRefs. Lines for non-allow-listed paths are
+ * dropped (logged); the rest of the text passes through verbatim.
+ */
+function extractPrompt(messages: Array<{ role: string; content: string }>): {
+  text: string;
+  images: ImageRef[];
+} {
+  let raw = "";
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
-    if (m && m.role === "user") return m.content;
+    if (m && m.role === "user") { raw = m.content; break; }
   }
-  return "";
+  if (!raw) return { text: "", images: [] };
+
+  const images: ImageRef[] = [];
+  const remaining: string[] = [];
+  for (const line of raw.split("\n")) {
+    const m = IMAGE_LINE_RE.exec(line);
+    if (!m || !m[1]) { remaining.push(line); continue; }
+    const path = m[1].trim();
+    if (!path.startsWith(ATTACHMENT_PREFIX)) {
+      console.warn(`[chat] dropping image line outside allowed prefix: ${path}`);
+      continue;
+    }
+    const ext = (path.match(/\.[a-z0-9]+$/i)?.[0] ?? "").toLowerCase();
+    const mediaType = MEDIA_TYPE_BY_EXT[ext];
+    if (!mediaType) {
+      console.warn(`[chat] dropping image with unsupported extension: ${path}`);
+      continue;
+    }
+    images.push({ path, mediaType });
+  }
+  return { text: remaining.join("\n").trim(), images };
 }

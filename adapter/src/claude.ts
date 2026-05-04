@@ -5,13 +5,17 @@
 // Isolation: this is the ONLY file that imports the SDK. Swap it out behind
 // this interface if the SDK surface churns.
 
-import { query, type SDKMessage, type Options } from "@anthropic-ai/claude-agent-sdk";
+import { promises as fs } from "node:fs";
+import { query, type SDKMessage, type SDKUserMessage, type Options } from "@anthropic-ai/claude-agent-sdk";
 import { EventTranslator, capToolOutput } from "./events.js";
 import type { StreamEvent } from "./types.js";
+import type { ImageRef } from "./rpc.js";
 
 export interface RunTurnArgs {
   chatId: string;
   prompt: string;
+  /** Optional image attachments to send as native content blocks. */
+  images?: ImageRef[];
   cwd: string;
   /** Prior SDK session UUID to resume; undefined for a new session. */
   resumeSessionId: string | undefined;
@@ -22,7 +26,7 @@ export interface RunTurnArgs {
 }
 
 export async function runTurn(args: RunTurnArgs): Promise<void> {
-  const { chatId, prompt, cwd, resumeSessionId, signal, onEvent, onSessionId } = args;
+  const { chatId, prompt, images = [], cwd, resumeSessionId, signal, onEvent, onSessionId } = args;
   const translator = new EventTranslator();
 
   // Point the SDK at the global CLI binary we installed in the image.
@@ -47,9 +51,17 @@ export async function runTurn(args: RunTurnArgs): Promise<void> {
     ...(resumeSessionId ? { resume: resumeSessionId } : {}),
   } as Options;
 
-  console.log(`[claude] runTurn chat=${chatId.slice(0, 8)} resume=${resumeSessionId?.slice(0, 8) ?? "none"} cwd=${cwd}`);
+  console.log(`[claude] runTurn chat=${chatId.slice(0, 8)} resume=${resumeSessionId?.slice(0, 8) ?? "none"} cwd=${cwd} imgs=${images.length}`);
 
-  let iter = query({ prompt, options });
+  // With images, switch to streaming-input mode so we can pass structured
+  // content blocks (text + base64 image) in one user message — model gets
+  // native vision in the same turn, no Read-tool round-trip.
+  const buildPrompt = images.length > 0
+    ? async () => userMessageStream(prompt, images)
+    : null;
+  let iter = buildPrompt
+    ? query({ prompt: await buildPrompt(), options })
+    : query({ prompt, options });
   let retriedFresh = false;
 
   let msgCount = 0;
@@ -82,7 +94,9 @@ export async function runTurn(args: RunTurnArgs): Promise<void> {
         retriedFresh = true;
         const freshOptions = { ...options };
         delete (freshOptions as Record<string, unknown>).resume;
-        iter = query({ prompt, options: freshOptions as Options });
+        iter = buildPrompt
+          ? query({ prompt: await buildPrompt(), options: freshOptions as Options })
+          : query({ prompt, options: freshOptions as Options });
         sessionIdSeen = undefined;
         msgCount = 0;
         return runLoop();
@@ -96,6 +110,40 @@ export async function runTurn(args: RunTurnArgs): Promise<void> {
   if (!signal.aborted) {
     for (const ev of translator.turnEnd(chatId, undefined)) onEvent(ev);
   }
+}
+
+/**
+ * Build a one-shot async iterable yielding a single SDKUserMessage whose
+ * content is [image_1, image_2, …, text]. Images are read from disk and
+ * base64-encoded inline; the text follows so the model sees the question
+ * after the visual context.
+ */
+async function* userMessageStream(
+  text: string,
+  images: ImageRef[],
+): AsyncIterable<SDKUserMessage> {
+  const blocks: Array<Record<string, unknown>> = [];
+  for (const img of images) {
+    let buf: Buffer;
+    try {
+      buf = await fs.readFile(img.path);
+    } catch (e) {
+      console.warn(`[claude] cannot read image ${img.path}: ${(e as Error).message}`);
+      continue;
+    }
+    blocks.push({
+      type: "image",
+      source: { type: "base64", media_type: img.mediaType, data: buf.toString("base64") },
+    });
+  }
+  if (text) blocks.push({ type: "text", text });
+  // The SDK reads only the message field for content; everything else is
+  // metadata we leave for it to populate (session_id, uuid, timestamp).
+  yield {
+    type: "user",
+    parent_tool_use_id: null,
+    message: { role: "user", content: blocks as never },
+  } as SDKUserMessage;
 }
 
 function handleSdkMessage(
