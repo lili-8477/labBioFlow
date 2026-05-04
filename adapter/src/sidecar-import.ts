@@ -16,17 +16,17 @@ export interface ImportResult {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * Best-effort one-shot import of legacy `.pantheon/chats/*.json` sidecar
- * files into the `chats` table. Writes a `.pantheon/chats/.imported` sentinel
+ * Best-effort one-shot import of legacy `.claude/chats/*.json` sidecar
+ * files into the `chats` table. Writes a `.claude/chats/.imported` sentinel
  * on completion so re-runs are no-ops. Idempotent via ON CONFLICT DO NOTHING.
  *
  * Sentinel lives INSIDE the chats dir (a dotfile — doesn't match the
  * importer's .json filter) because in production bind-mount layouts only
- * the chats subdir is writable by the adapter user; the parent .pantheon
+ * the chats subdir is writable by the adapter user; the parent .claude
  * dir is often auto-created by Docker as root and read-only.
  */
 export async function importSidecar(opts: ImportOptions): Promise<ImportResult> {
-  const sentinel = path.join(opts.workspaceRoot, ".pantheon", "chats", ".imported");
+  const sentinel = path.join(opts.workspaceRoot, ".claude", "chats", ".imported");
   try {
     await fs.stat(sentinel);
     return { imported: 0, skipped: 0 };
@@ -34,7 +34,7 @@ export async function importSidecar(opts: ImportOptions): Promise<ImportResult> 
     if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
   }
 
-  const chatsDir = path.join(opts.workspaceRoot, ".pantheon", "chats");
+  const chatsDir = path.join(opts.workspaceRoot, ".claude", "chats");
   let files: string[] = [];
   try {
     files = await fs.readdir(chatsDir);

@@ -25,7 +25,7 @@ afterAll(async () => {
 describe("importSidecar", () => {
   it("imports valid sidecar files and writes a sentinel", async () => {
     const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "adapter-imp-"));
-    const chatsDir = path.join(workspaceRoot, ".pantheon", "chats");
+    const chatsDir = path.join(workspaceRoot, ".claude", "chats");
     await mkdir(chatsDir, { recursive: true });
 
     await pool.query("DELETE FROM chats");
@@ -54,7 +54,7 @@ describe("importSidecar", () => {
     const c2Row = await repo.read(c2);
     expect(c2Row!.session_id).toBe(s2);
 
-    const entries = await readdir(path.join(workspaceRoot, ".pantheon", "chats"));
+    const entries = await readdir(path.join(workspaceRoot, ".claude", "chats"));
     expect(entries).toContain(".imported");
 
     const second = await importSidecar({ pool, username: "alice", workspaceRoot });
@@ -64,7 +64,7 @@ describe("importSidecar", () => {
 
   it("skips malformed json and reports it", async () => {
     const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "adapter-imp-"));
-    const chatsDir = path.join(workspaceRoot, ".pantheon", "chats");
+    const chatsDir = path.join(workspaceRoot, ".claude", "chats");
     await mkdir(chatsDir, { recursive: true });
 
     await pool.query("DELETE FROM chats");
