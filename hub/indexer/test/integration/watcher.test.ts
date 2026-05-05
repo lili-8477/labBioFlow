@@ -15,7 +15,7 @@ let pg: StartedPostgreSqlContainer;
 let pool: Pool;
 
 beforeAll(async () => {
-  pg = await new PostgreSqlContainer("postgres:16-alpine").start();
+  pg = await new PostgreSqlContainer("pgvector/pgvector:pg16").start();
   pool = new Pool({ connectionString: pg.getConnectionUri(), max: 10 });
   await runMigrations({
     pool,

@@ -20,7 +20,7 @@ const SID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const SID2 = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 
 beforeAll(async () => {
-  pg = await new PostgreSqlContainer("postgres:16-alpine").start();
+  pg = await new PostgreSqlContainer("pgvector/pgvector:pg16").start();
   pool = new Pool({ connectionString: pg.getConnectionUri() });
   await runMigrations({
     pool,
