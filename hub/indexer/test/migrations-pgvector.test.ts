@@ -86,3 +86,55 @@ describe("migration 0006 — memories", () => {
     expect(v.rowCount).toBe(1);
   });
 });
+
+describe("migration 0007 — memory_chunks", () => {
+  it("creates the vector extension", async () => {
+    const ext = await pool.query(
+      "SELECT extname FROM pg_extension WHERE extname = 'vector'",
+    );
+    expect(ext.rowCount).toBe(1);
+  });
+
+  it("creates memory_chunks with embedding vector(384) and generated tsv", async () => {
+    const cols = await pool.query(
+      `SELECT column_name, data_type FROM information_schema.columns
+        WHERE table_name = 'memory_chunks' ORDER BY ordinal_position`,
+    );
+    const byName = Object.fromEntries(cols.rows.map((r) => [r.column_name, r.data_type]));
+    expect(byName.chunk_id).toBe("bigint");
+    expect(byName.memory_id).toBe("uuid");
+    expect(byName.chunk_idx).toBe("integer");
+    expect(byName.content).toBe("text");
+    expect(byName.embedding).toBe("USER-DEFINED"); // pgvector vector type
+    expect(byName.tsv).toBe("tsvector");
+  });
+
+  it("inserts a chunk and round-trips a 384-dim embedding", async () => {
+    const m = await pool.query(
+      `INSERT INTO memories (memory_id, username, type, source, name, description, body, content_hash)
+       VALUES (gen_random_uuid(), 'alice', 'observation', 'distilled', 'n', 'd', 'b', '\\xab'::bytea)
+       RETURNING memory_id`,
+    );
+    const mid = m.rows[0].memory_id;
+    const vec = "[" + Array.from({ length: 384 }, () => "0.01").join(",") + "]";
+    await pool.query(
+      `INSERT INTO memory_chunks (memory_id, chunk_idx, content, embedding)
+       VALUES ($1, 0, 'hello world', $2::vector)`,
+      [mid, vec],
+    );
+    const got = await pool.query(
+      "SELECT content, tsv @@ plainto_tsquery('english','hello') AS hit FROM memory_chunks WHERE memory_id = $1",
+      [mid],
+    );
+    expect(got.rows[0].content).toBe("hello world");
+    expect(got.rows[0].hit).toBe(true);
+  });
+
+  it("creates the HNSW vector index", async () => {
+    const idx = await pool.query(
+      `SELECT indexdef FROM pg_indexes WHERE indexname = 'memory_chunks_embedding_idx'`,
+    );
+    expect(idx.rows[0].indexdef.toLowerCase()).toContain("hnsw");
+    expect(idx.rows[0].indexdef.toLowerCase()).toContain("vector_cosine_ops");
+  });
+});
