@@ -64,6 +64,23 @@ describe("migration 0006 — memories", () => {
     expect(dup.rowCount).toBe(0);
   });
 
+  it("dedups across NULL project_dir (user-scope memories)", async () => {
+    const h = "\\xcafebabe";
+    await pool.query(
+      `INSERT INTO memories (memory_id, username, project_dir, type, source, name, description, body, content_hash)
+       VALUES (gen_random_uuid(), 'bob', NULL, 'user', 'user', 'n', 'd', 'b', $1::bytea)`,
+      [h],
+    );
+    const dup = await pool.query(
+      `INSERT INTO memories (memory_id, username, project_dir, type, source, name, description, body, content_hash)
+       VALUES (gen_random_uuid(), 'bob', NULL, 'user', 'user', 'n2', 'd2', 'b2', $1::bytea)
+       ON CONFLICT (username, project_dir, type, content_hash) DO NOTHING
+       RETURNING memory_id`,
+      [h],
+    );
+    expect(dup.rowCount).toBe(0);
+  });
+
   it("registers in schema_migrations as version 6", async () => {
     const v = await pool.query("SELECT version FROM schema_migrations WHERE version = 6");
     expect(v.rowCount).toBe(1);

@@ -261,7 +261,7 @@ CREATE TABLE memories (
   hit_count          INT  NOT NULL DEFAULT 0,
   last_hit_at        TIMESTAMPTZ,
   deleted_at         TIMESTAMPTZ,
-  UNIQUE (username, project_dir, type, content_hash)
+  UNIQUE NULLS NOT DISTINCT (username, project_dir, type, content_hash)
 );
 
 CREATE INDEX memories_username_type_created_idx
