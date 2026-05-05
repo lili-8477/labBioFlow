@@ -85,6 +85,17 @@ services:
     networks:
       - bioflow-net
 
+  embedder:
+    build: ./embedder
+    container_name: claude-bioflow-embedder
+    restart: unless-stopped
+    networks: [bioflow-net]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
   indexer:
     build: ./indexer
     container_name: claude-bioflow-indexer
@@ -94,10 +105,22 @@ services:
       WORKSPACES_ROOT: /workspaces
       MAX_CONCURRENT_FILES: "8"
       LOG_LEVEL: info
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      EMBEDDER_URL: http://embedder:8000
+      DISTILL_MODEL: claude-haiku-4-5
+      DISTILL_SETTLE_SEC: "300"
+      DISTILL_INTERVAL_SEC: "60"
+      DISTILL_MAX_TOKENS: "80000"
+      DISTILL_PROMPT_VERSION: "1"
+      DISTILL_BATCH_SIZE: "50"
+      EMBEDDER_BATCH_SIZE: "64"
+      EMBEDDER_INTERVAL_MS: "5000"
     volumes:
       - ./workspaces:/workspaces:ro
     depends_on:
       postgres:
+        condition: service_healthy
+      embedder:
         condition: service_healthy
     restart: unless-stopped
     networks:
