@@ -137,4 +137,24 @@ describe("migration 0007 — memory_chunks", () => {
     expect(idx.rows[0].indexdef.toLowerCase()).toContain("hnsw");
     expect(idx.rows[0].indexdef.toLowerCase()).toContain("vector_cosine_ops");
   });
+
+  it("cascades delete from memories to memory_chunks", async () => {
+    const m = await pool.query(
+      `INSERT INTO memories (memory_id, username, type, source, name, description, body, content_hash)
+       VALUES (gen_random_uuid(), 'alice', 'observation', 'distilled', 'n', 'd', 'b', '\\xcc'::bytea)
+       RETURNING memory_id`,
+    );
+    const mid = m.rows[0].memory_id;
+    await pool.query(
+      `INSERT INTO memory_chunks (memory_id, chunk_idx, content)
+       VALUES ($1, 0, 'ephemeral chunk')`,
+      [mid],
+    );
+    await pool.query("DELETE FROM memories WHERE memory_id = $1", [mid]);
+    const orphan = await pool.query(
+      "SELECT 1 FROM memory_chunks WHERE memory_id = $1",
+      [mid],
+    );
+    expect(orphan.rowCount).toBe(0);
+  });
 });
