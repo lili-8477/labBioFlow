@@ -693,6 +693,14 @@ distiller, embedder. No memory-api, no MCP, no hooks. Run for one week,
 inspect distilled rows in PG by hand, tune the prompt. Zero user-visible
 change.
 
+  STATUS: code-complete on branch `feat/agent-memory-sub-phase-a`
+  (HEAD `b56f31d`, 2026-05-05). 109 indexer tests + 4 embedder pytest
+  tests pass. Production smoke (`docker compose up -d --build`) deferred
+  pending an operator-scheduled maintenance window — the postgres image
+  swap to `pgvector/pgvector:pg16` requires a brief restart of the
+  shared `claude-bioflow-postgres` container, which is currently shared
+  by the indexer, the adapter, and four live user containers.
+
 **Sub-phase B — retrieval.** Land memory-api, MCP server, `SessionStart`
 hook, slash commands. Roll one user (li86) by flipping `MEMORY_ENABLED`,
 verify, then roll the rest. Backout = unset `MEMORY_ENABLED` (no schema
