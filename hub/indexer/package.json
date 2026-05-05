@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.94.0",
     "chokidar": "^4.0.1",
     "pg": "^8.13.1",
     "pino": "^9.5.0",
