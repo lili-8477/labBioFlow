@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { runMigrations } from "../src/migrate.js";
 import { insertMemoryRow } from "../src/distiller-repo.js";
 import { contentHash } from "../src/content-hash.js";
-import { searchMemories } from "../src/memory-repo.js";
+import { searchMemories, getMemory, timelineMemories } from "../src/memory-repo.js";
 
 const MIGRATIONS_DIR = fileURLToPath(new URL("../migrations/", import.meta.url));
 let pg: StartedPostgreSqlContainer;
@@ -240,5 +240,172 @@ describe("searchMemories", () => {
       username: "alice", project_dir: "-w-p", query: QUERY, limit: 1,
     });
     expect(oneOnly.length).toBe(1);
+  });
+});
+
+async function addFacets(memId: string, facets: Record<string, string[]>): Promise<void> {
+  for (const [k, vs] of Object.entries(facets)) {
+    for (const v of vs) {
+      await pool.query(
+        `INSERT INTO memory_facets (memory_id, key, value) VALUES ($1, $2, $3)
+         ON CONFLICT DO NOTHING`,
+        [memId, k, v],
+      );
+    }
+  }
+}
+
+describe("getMemory", () => {
+  it("returns the row with facets grouped by key, values sorted", async () => {
+    const id = await seedMemory({
+      username: "alice", project_dir: "-w-p", body: "any body text", seed: 200,
+    });
+    await addFacets(id, {
+      tool: ["STAR", "fastp"],
+      gene: ["TP53"],
+    });
+
+    const got = await getMemory(pool, id);
+    expect(got).not.toBeNull();
+    expect(got!.memory_id).toBe(id);
+    expect(got!.username).toBe("alice");
+    expect(got!.project_dir).toBe("-w-p");
+    expect(got!.type).toBe("observation");
+    expect(got!.source).toBe("user");
+    expect(got!.name).toBe("seed-200");
+    expect(got!.description).toBe("desc-200");
+    expect(got!.body).toBe("any body text");
+    expect(got!.source_session_id).toBeNull();
+    expect(got!.hit_count).toBe(0);
+    expect(got!.last_hit_at).toBeNull();
+    expect(got!.created_at).toBeInstanceOf(Date);
+    expect(got!.updated_at).toBeInstanceOf(Date);
+    // facets grouped by key; values returned in sorted order.
+    expect(got!.facets).toEqual({
+      tool: ["STAR", "fastp"],
+      gene: ["TP53"],
+    });
+  });
+
+  it("returns an empty facets object when the row has no facets", async () => {
+    const id = await seedMemory({
+      username: "alice", project_dir: null, body: "no facets here", seed: 201,
+    });
+    const got = await getMemory(pool, id);
+    expect(got).not.toBeNull();
+    expect(got!.facets).toEqual({});
+  });
+
+  it("returns null for a nonexistent id", async () => {
+    const got = await getMemory(pool, "00000000-0000-0000-0000-000000000000");
+    expect(got).toBeNull();
+  });
+
+  it("returns null for soft-deleted rows", async () => {
+    const id = await seedMemory({
+      username: "alice", project_dir: "-w-p", body: "soon deleted", seed: 202,
+    });
+    await pool.query("UPDATE memories SET deleted_at = now() WHERE memory_id = $1", [id]);
+    const got = await getMemory(pool, id);
+    expect(got).toBeNull();
+  });
+});
+
+describe("timelineMemories", () => {
+  async function seedAt(args: SeedArgs, createdAt: Date): Promise<string> {
+    const id = await seedMemory(args);
+    await pool.query(
+      `UPDATE memories SET created_at = $1 WHERE memory_id = $2`,
+      [createdAt.toISOString(), id],
+    );
+    return id;
+  }
+
+  it("returns rows newest first and excludes soft-deleted ones", async () => {
+    const t0 = new Date("2026-01-01T00:00:00Z");
+    const t1 = new Date("2026-02-01T00:00:00Z");
+    const t2 = new Date("2026-03-01T00:00:00Z");
+    const oldId    = await seedAt({ username: "alice", project_dir: "-w-p", body: "old",    seed: 300 }, t0);
+    const midId    = await seedAt({ username: "alice", project_dir: "-w-p", body: "mid",    seed: 301 }, t1);
+    const newId    = await seedAt({ username: "alice", project_dir: "-w-p", body: "new",    seed: 302 }, t2);
+    const goneId   = await seedAt({ username: "alice", project_dir: "-w-p", body: "gone",   seed: 303 }, t1);
+    await pool.query("UPDATE memories SET deleted_at = now() WHERE memory_id = $1", [goneId]);
+
+    const rows = await timelineMemories({ pool, username: "alice" });
+    expect(rows.map((r) => r.memory_id)).toEqual([newId, midId, oldId]);
+    expect(rows.every((r) => r.created_at instanceof Date)).toBe(true);
+    expect(rows[0].name).toBe("seed-302");
+    expect(rows[0].type).toBe("observation");
+  });
+
+  it("respects since/until inclusive bounds", async () => {
+    const t0 = new Date("2026-01-01T00:00:00Z");
+    const t1 = new Date("2026-02-01T00:00:00Z");
+    const t2 = new Date("2026-03-01T00:00:00Z");
+    const id0 = await seedAt({ username: "alice", project_dir: "-w-p", body: "a", seed: 310 }, t0);
+    const id1 = await seedAt({ username: "alice", project_dir: "-w-p", body: "b", seed: 311 }, t1);
+    const id2 = await seedAt({ username: "alice", project_dir: "-w-p", body: "c", seed: 312 }, t2);
+
+    const inWindow = await timelineMemories({
+      pool, username: "alice",
+      since: t1,
+      until: t2,
+    });
+    expect(inWindow.map((r) => r.memory_id)).toEqual([id2, id1]);
+
+    const onlyOldest = await timelineMemories({
+      pool, username: "alice",
+      until: t0,
+    });
+    expect(onlyOldest.map((r) => r.memory_id)).toEqual([id0]);
+  });
+
+  it("includes __org__ rows for a user query and excludes other users", async () => {
+    const t0 = new Date("2026-01-01T00:00:00Z");
+    const t1 = new Date("2026-02-01T00:00:00Z");
+    const orgId   = await seedAt({ username: "__org__", project_dir: null,  body: "org",   seed: 320 }, t0);
+    const aliceId = await seedAt({ username: "alice",   project_dir: "-w-p", body: "alice", seed: 321 }, t1);
+    const bobId   = await seedAt({ username: "bob",     project_dir: "-w-p", body: "bob",   seed: 322 }, t1);
+
+    const rows = await timelineMemories({ pool, username: "alice" });
+    const ids = rows.map((r) => r.memory_id);
+    expect(ids).toEqual([aliceId, orgId]);
+    expect(ids).not.toContain(bobId);
+  });
+
+  it("filters by project_dir only when a string is supplied; undefined and null are no-filter", async () => {
+    const t0 = new Date("2026-01-01T00:00:00Z");
+    const t1 = new Date("2026-02-01T00:00:00Z");
+    const t2 = new Date("2026-03-01T00:00:00Z");
+    const userId    = await seedAt({ username: "alice", project_dir: null,  body: "user",  seed: 330 }, t0);
+    const projAId   = await seedAt({ username: "alice", project_dir: "-w-a", body: "projA", seed: 331 }, t1);
+    const projBId   = await seedAt({ username: "alice", project_dir: "-w-b", body: "projB", seed: 332 }, t2);
+
+    // undefined → no filter
+    const all = await timelineMemories({ pool, username: "alice" });
+    expect(all.map((r) => r.memory_id)).toEqual([projBId, projAId, userId]);
+
+    // null → also no filter (documented as same as undefined)
+    const allNull = await timelineMemories({ pool, username: "alice", project_dir: null });
+    expect(allNull.map((r) => r.memory_id)).toEqual([projBId, projAId, userId]);
+
+    // string → exact match only
+    const onlyA = await timelineMemories({ pool, username: "alice", project_dir: "-w-a" });
+    expect(onlyA.map((r) => r.memory_id)).toEqual([projAId]);
+  });
+
+  it("respects the limit (default 50, override honoured)", async () => {
+    const base = new Date("2026-01-01T00:00:00Z").getTime();
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      ids.push(await seedAt(
+        { username: "alice", project_dir: "-w-p", body: `b${i}`, seed: 400 + i },
+        new Date(base + i * 60_000),
+      ));
+    }
+    const two = await timelineMemories({ pool, username: "alice", limit: 2 });
+    expect(two.length).toBe(2);
+    // newest first → ids[4], ids[3]
+    expect(two.map((r) => r.memory_id)).toEqual([ids[4], ids[3]]);
   });
 });

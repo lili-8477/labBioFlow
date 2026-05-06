@@ -180,3 +180,142 @@ export async function searchMemories(args: SearchMemoriesArgs): Promise<SearchHi
 
   return hits;
 }
+
+export interface MemoryDetail {
+  memory_id:          string;
+  username:           string;
+  project_dir:        string | null;
+  type:               string;
+  source:             "distilled" | "user";
+  name:               string;
+  description:        string;
+  body:               string;
+  source_session_id:  string | null;
+  facets:             Record<string, string[]>;
+  hit_count:          number;
+  last_hit_at:        Date | null;
+  created_at:         Date;
+  updated_at:         Date;
+}
+
+// Fetch a single memory by id with its facets grouped by key. Soft-deleted
+// rows (deleted_at IS NOT NULL) are treated as absent and return null.
+//
+// One round-trip via a correlated subquery that builds the facets map in
+// Postgres (jsonb_object_agg over per-key jsonb_agg). Empty facet sets
+// collapse to '{}'::jsonb so the JS shape is always Record<string,string[]>.
+export async function getMemory(
+  pool:     Pool,
+  memoryId: string,
+): Promise<MemoryDetail | null> {
+  type Row = {
+    memory_id:          string;
+    username:           string;
+    project_dir:        string | null;
+    type:               string;
+    source:             "distilled" | "user";
+    name:               string;
+    description:        string;
+    body:               string;
+    source_session_id:  string | null;
+    hit_count:          number;
+    last_hit_at:        Date | null;
+    created_at:         Date;
+    updated_at:         Date;
+    facets:             Record<string, string[]>;
+  };
+  const r = await pool.query<Row>(
+    `SELECT m.memory_id, m.username, m.project_dir, m.type, m.source,
+            m.name, m.description, m.body, m.source_session_id,
+            m.hit_count, m.last_hit_at, m.created_at, m.updated_at,
+            COALESCE(
+              (SELECT jsonb_object_agg(key, vals) FROM (
+                 SELECT key, jsonb_agg(value ORDER BY value COLLATE "C") AS vals
+                   FROM memory_facets
+                  WHERE memory_id = m.memory_id
+                  GROUP BY key
+               ) g),
+              '{}'::jsonb
+            ) AS facets
+       FROM memories m
+      WHERE m.memory_id = $1
+        AND m.deleted_at IS NULL`,
+    [memoryId],
+  );
+  if (r.rowCount === 0) return null;
+  const row = r.rows[0]!;
+  return {
+    memory_id:         row.memory_id,
+    username:          row.username,
+    project_dir:       row.project_dir,
+    type:              row.type,
+    source:            row.source,
+    name:              row.name,
+    description:       row.description,
+    body:              row.body,
+    source_session_id: row.source_session_id,
+    facets:            row.facets,
+    hit_count:         row.hit_count,
+    last_hit_at:       row.last_hit_at,
+    created_at:        row.created_at,
+    updated_at:        row.updated_at,
+  };
+}
+
+export interface TimelineEntry {
+  memory_id:    string;
+  name:         string;
+  type:         string;
+  created_at:   Date;
+}
+
+export interface TimelineMemoriesArgs {
+  pool:         Pool;
+  username:     string;
+  // project_dir tri-state semantics:
+  //   undefined → no project filter (returns all scopes for the user + org)
+  //   null      → treated the same as undefined (no filter), so callers that
+  //               pass an Optional<string|null> from JSON without normalising
+  //               still get the org+user+all-projects timeline they expect
+  //   "<dir>"   → exact match on project_dir = "<dir>" only; rows with
+  //               project_dir IS NULL (including org rows) are excluded
+  project_dir?: string | null;
+  since?:       Date;
+  until?:       Date;
+  limit?:       number;
+}
+
+// Chronological timeline (newest first) for a user, merged with org-scope
+// memories. Soft-deleted rows are excluded. Results are capped by `limit`
+// (default 50). since/until are inclusive bounds.
+export async function timelineMemories(args: TimelineMemoriesArgs): Promise<TimelineEntry[]> {
+  const limit      = args.limit ?? 50;
+  const projectDir = typeof args.project_dir === "string" ? args.project_dir : null;
+  const since      = args.since ? args.since.toISOString() : null;
+  const until      = args.until ? args.until.toISOString() : null;
+
+  type Row = {
+    memory_id:  string;
+    name:       string;
+    type:       string;
+    created_at: Date;
+  };
+  const r = await args.pool.query<Row>(
+    `SELECT memory_id, name, type, created_at
+       FROM memories
+      WHERE deleted_at IS NULL
+        AND (username = $1 OR username = '__org__')
+        AND ($2::text IS NULL OR project_dir = $2)
+        AND ($3::timestamptz IS NULL OR created_at >= $3)
+        AND ($4::timestamptz IS NULL OR created_at <= $4)
+      ORDER BY created_at DESC
+      LIMIT $5`,
+    [args.username, projectDir, since, until, limit],
+  );
+  return r.rows.map((row) => ({
+    memory_id:  row.memory_id,
+    name:       row.name,
+    type:       row.type,
+    created_at: row.created_at,
+  }));
+}
