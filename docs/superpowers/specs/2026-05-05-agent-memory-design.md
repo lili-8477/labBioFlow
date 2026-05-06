@@ -695,11 +695,20 @@ change.
 
   STATUS: code-complete on branch `feat/agent-memory-sub-phase-a`
   (HEAD `b56f31d`, 2026-05-05). 109 indexer tests + 4 embedder pytest
-  tests pass. Production smoke (`docker compose up -d --build`) deferred
-  pending an operator-scheduled maintenance window — the postgres image
-  swap to `pgvector/pgvector:pg16` requires a brief restart of the
-  shared `claude-bioflow-postgres` container, which is currently shared
-  by the indexer, the adapter, and four live user containers.
+  tests pass. A worktree-scoped smoke validated migrations 0006–0008
+  (all 5 new tables created against `pgvector/pgvector:pg16`), the
+  embedder sidecar reached `/health` returning `bge-small-en-v1.5` /
+  dim 384, and the indexer's distiller + embedder loops both ticked.
+  The end-to-end LLM call was not exercised because `docker compose up`
+  from the worktree mounts the worktree's empty `postgres-data/` and
+  `workspaces/` instead of the parent checkout's production paths —
+  so the indexer saw zero JSONL files and zero settled sessions. The
+  worktree stack was torn down and the parent's stack restarted; all
+  production data (23 sessions, 15 chats, 759 token rows, 4 live user
+  containers) was preserved on disk and is intact. To actually land
+  sub-phase A in production, merge the branch to `main` and run
+  `docker compose up -d --build` from the parent checkout
+  (`/home/lili/claude-bioflow/hub/`) — same bind-mount paths as today.
 
 **Sub-phase B — retrieval.** Land memory-api, MCP server, `SessionStart`
 hook, slash commands. Roll one user (li86) by flipping `MEMORY_ENABLED`,
