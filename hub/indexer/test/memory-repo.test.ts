@@ -127,7 +127,12 @@ describe("searchMemories", () => {
       expect(h.snippet.length).toBeGreaterThan(0);
       expect(h.snippet.length).toBeLessThanOrEqual(200);
       expect(typeof h.score).toBe("number");
+      expect(Number.isFinite(h.score)).toBe(true);
     }
+    // Ordering must be by score (not insertion order); scope multiplier
+    // dominates here, so scores must be strictly descending.
+    expect(hits[0].score).toBeGreaterThan(hits[1].score);
+    expect(hits[1].score).toBeGreaterThan(hits[2].score);
 
     const counts = await pool.query<{ memory_id: string; hit_count: number }>(
       `SELECT memory_id, hit_count FROM memories
@@ -165,6 +170,34 @@ describe("searchMemories", () => {
       username: "alice", project_dir: "-w-p", query: QUERY, limit: 10,
     });
     expect(hits.map((h) => h.memory_id)).toContain(id);
+    // No NaN poisoning from the dropped vector arm — every score must be
+    // a finite number.
+    for (const h of hits) expect(Number.isFinite(h.score)).toBe(true);
+  });
+
+  it("FTS-only fallback orders results by ts_rank when scope is equal", async () => {
+    // Same scope (project) so the scope/popularity/recency multipliers are
+    // identical; ranking must come from ts_rank(fts_score) alone. The strong
+    // body repeats the query terms more often than the weak body.
+    // plainto_tsquery is conjunctive — both bodies must contain every query
+    // term ("scanpy", "preprocessing", "pipeline"). Strong repeats them many
+    // times; weak mentions each once buried in unrelated padding.
+    const STRONG = "scanpy preprocessing pipeline scanpy preprocessing pipeline scanpy preprocessing pipeline scanpy preprocessing pipeline";
+    const WEAK   = "scanpy preprocessing pipeline " + "padding ".repeat(80);
+    const weakId   = await seedMemory({ username: "alice", project_dir: "-w-p", body: WEAK,   seed: 101 });
+    const strongId = await seedMemory({ username: "alice", project_dir: "-w-p", body: STRONG, seed: 102 });
+
+    const hits = await searchMemories({
+      pool, embedderClient: downEmbedder,
+      username: "alice", project_dir: "-w-p", query: QUERY, limit: 10,
+    });
+    const ids = hits.map((h) => h.memory_id);
+    expect(ids).toContain(strongId);
+    expect(ids).toContain(weakId);
+    expect(ids.indexOf(strongId)).toBeLessThan(ids.indexOf(weakId));
+    const strongHit = hits.find((h) => h.memory_id === strongId)!;
+    const weakHit   = hits.find((h) => h.memory_id === weakId)!;
+    expect(strongHit.score).toBeGreaterThan(weakHit.score);
   });
 
   it("respects the types filter", async () => {
