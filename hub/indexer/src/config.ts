@@ -20,6 +20,7 @@ export interface Config {
   distillBatchSize:     number;
   embedderBatchSize:    number;
   embedderIntervalMs:   number;
+  memoryApiPort:        number;
 }
 
 function parseIntVar(env: Record<string, string | undefined>, name: string, fallback: number): number {
@@ -66,5 +67,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     distillBatchSize:     parseIntVar(env, "DISTILL_BATCH_SIZE",       50),
     embedderBatchSize:    parseIntVar(env, "EMBEDDER_BATCH_SIZE",      64),
     embedderIntervalMs:   parseIntVar(env, "EMBEDDER_INTERVAL_MS",   5000),
+    memoryApiPort:        parseIntVar(env, "MEMORY_API_PORT",         8400),
   };
 }

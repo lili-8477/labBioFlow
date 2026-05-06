@@ -10,6 +10,7 @@ import { distill } from "./llm-client.js";
 import { runDistillerOnce } from "./distiller.js";
 import { runEmbedderOnce } from "./embedder-worker.js";
 import { readSessionJsonl } from "./transcript-reader.js";
+import { buildApp } from "./memory-api.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -82,8 +83,13 @@ async function main(): Promise<void> {
   startDistillerLoop();
   startEmbedderLoop();
 
+  const app = buildApp({});
+  await app.listen({ port: cfg.memoryApiPort, host: "0.0.0.0" });
+  logger.info({ port: cfg.memoryApiPort }, "memory-api listening");
+
   const shutdown = async (sig: NodeJS.Signals): Promise<void> => {
     logger.info({ sig }, "shutdown signal");
+    await app.close();
     await handle.close();
     await pool.end();
     process.exit(0);
