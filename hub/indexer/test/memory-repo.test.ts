@@ -433,6 +433,25 @@ describe("writeUserMemory", () => {
     expect(r.rows[0].source).toBe("user");
   });
 
+  it("scope='user' coerces project_dir to NULL even when caller passes a non-null value", async () => {
+    const { memory_id } = await writeUserMemory({
+      pool,
+      username:    "alice",
+      scope:       "user",
+      project_dir: "-w-leaked-from-api",   // simulating an API-layer bug
+      type:        "user",
+      name:        "coercion check",
+      description: "verify defensive coercion",
+      body:        "user-scope must drop any project_dir the caller leaked through",
+    });
+    expect(memory_id).not.toBeNull();
+    const r = await pool.query<{ project_dir: string | null }>(
+      `SELECT project_dir FROM memories WHERE memory_id = $1`,
+      [memory_id],
+    );
+    expect(r.rows[0].project_dir).toBeNull();
+  });
+
   it("scope='project' writes a row with (username, project_dir)", async () => {
     const { memory_id } = await writeUserMemory({
       pool,
