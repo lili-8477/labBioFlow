@@ -29,16 +29,20 @@ export async function runDistillerOnce(pool: Pool, opts: RunDistillerOpts): Prom
   for (const row of users.rows) {
     summary.usersScanned++;
     const lockKey = userLockKey(row.username);
-    const got = await pool.query<{ ok: boolean }>(
-      "SELECT pg_try_advisory_lock($1) AS ok",
-      [lockKey],
-    );
-    if (!got.rows[0]?.ok) continue; // another worker has this user
-
+    const client = await pool.connect();
     try {
-      await processUser(pool, row.username, opts, summary);
+      const got = await client.query<{ ok: boolean }>(
+        "SELECT pg_try_advisory_lock($1) AS ok",
+        [lockKey.toString()],
+      );
+      if (!got.rows[0]?.ok) continue; // another worker has this user
+      try {
+        await processUser(pool, row.username, opts, summary);
+      } finally {
+        await client.query("SELECT pg_advisory_unlock($1)", [lockKey.toString()]);
+      }
     } finally {
-      await pool.query("SELECT pg_advisory_unlock($1)", [lockKey]);
+      client.release();
     }
   }
   return summary;

@@ -2,7 +2,6 @@ import { Pool } from "pg";
 import pino from "pino";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFile } from "node:fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
 import { loadConfig } from "./config.js";
 import { runMigrations } from "./migrate.js";
@@ -10,7 +9,7 @@ import { startWatcher } from "./watcher.js";
 import { distill } from "./llm-client.js";
 import { runDistillerOnce } from "./distiller.js";
 import { runEmbedderOnce } from "./embedder-worker.js";
-import type { SettledSession } from "./distiller-repo.js";
+import { readSessionJsonl } from "./transcript-reader.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -39,24 +38,13 @@ async function main(): Promise<void> {
 
   const anthropic = new Anthropic({ apiKey: cfg.anthropicApiKey });
 
-  const readSessionJsonl = async (s: SettledSession): Promise<string> => {
-    const file = path.resolve(
-      cfg.workspacesRoot,
-      s.username,
-      "claude-projects",
-      s.encoded_project_dir,
-      `${s.session_id}.jsonl`,
-    );
-    return await readFile(file, "utf8");
-  };
-
   const startDistillerLoop = (): void => {
     const tick = async (): Promise<void> => {
       try {
         const summary = await runDistillerOnce(pool, {
           llm: (transcript) =>
             distill({ transcript, anthropic, model: cfg.distillModel, maxTokens: 4096 }),
-          readTranscript:    readSessionJsonl,
+          readTranscript:    (s) => readSessionJsonl(cfg.workspacesRoot, s),
           settleSeconds:     cfg.distillSettleSec,
           perUserLimit:      cfg.distillBatchSize,
           maxDistillTokens:  cfg.distillMaxTokens,
