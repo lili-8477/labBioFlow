@@ -106,6 +106,7 @@ describe("memory-api", () => {
         payload: { query: "q" },
       });
       expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({ error: "validation failed", issues: expect.any(Array) });
       expect(depsBag.repo.searchMemories).not.toHaveBeenCalled();
     });
   });
@@ -177,6 +178,7 @@ describe("memory-api", () => {
     it("400 when username is missing", async () => {
       const res = await app.inject({ method: "GET", url: "/memory/timeline?limit=10" });
       expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({ error: "validation failed", issues: expect.any(Array) });
       expect(depsBag.repo.timelineMemories).not.toHaveBeenCalled();
     });
   });
@@ -234,6 +236,7 @@ describe("memory-api", () => {
         payload: { username: "alice", type: "user", name: "n", description: "d", body: "b" },
       });
       expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({ error: "validation failed", issues: expect.any(Array) });
       expect(depsBag.repo.writeUserMemory).not.toHaveBeenCalled();
     });
   });
@@ -263,6 +266,7 @@ describe("memory-api", () => {
         payload: { username: "alice" },
       });
       expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({ error: "validation failed", issues: expect.any(Array) });
       expect(depsBag.repo.forgetMemory).not.toHaveBeenCalled();
     });
   });
@@ -303,6 +307,7 @@ describe("memory-api", () => {
         url:    "/memory/context?username=alice",
       });
       expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({ error: "validation failed", issues: expect.any(Array) });
       expect(depsBag.repo.getContext).not.toHaveBeenCalled();
     });
   });

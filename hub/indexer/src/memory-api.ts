@@ -82,7 +82,7 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
     const parsed = SearchBody.safeParse(req.body);
     if (!parsed.success) {
       reply.code(400);
-      return { error: parsed.error.message };
+      return { error: "validation failed", issues: parsed.error.issues };
     }
     const b = parsed.data;
     const hits = await deps.repo.searchMemories({
@@ -105,7 +105,7 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
     const parsed = TimelineQuery.safeParse(req.query);
     if (!parsed.success) {
       reply.code(400);
-      return { error: parsed.error.message };
+      return { error: "validation failed", issues: parsed.error.issues };
     }
     const q = parsed.data;
     const entries = await deps.repo.timelineMemories({
@@ -126,7 +126,7 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
     const parsed = ContextQuery.safeParse(req.query);
     if (!parsed.success) {
       reply.code(400);
-      return { error: parsed.error.message };
+      return { error: "validation failed", issues: parsed.error.issues };
     }
     const q = parsed.data;
     const ctx = await deps.repo.getContext({
@@ -144,7 +144,7 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
     const parsed = WriteBody.safeParse(req.body);
     if (!parsed.success) {
       reply.code(400);
-      return { error: parsed.error.message };
+      return { error: "validation failed", issues: parsed.error.issues };
     }
     const b = parsed.data;
     return await deps.repo.writeUserMemory({
@@ -166,7 +166,7 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
     const parsed = ForgetBody.safeParse(req.body);
     if (!parsed.success) {
       reply.code(400);
-      return { error: parsed.error.message };
+      return { error: "validation failed", issues: parsed.error.issues };
     }
     const b = parsed.data;
     return await deps.repo.forgetMemory({
