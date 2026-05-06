@@ -1,0 +1,28 @@
+{
+  "name": "bioflow-memory-mcp",
+  "version": "0.1.0",
+  "description": "MCP server bridging Claude Code agents to the bioflow memory-api.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": { "bioflow-memory-mcp": "dist/index.js" },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.5"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
