@@ -39,6 +39,61 @@ export interface WriteDistillationArgs {
   promptVersion:  number;
 }
 
+export interface InsertMemoryRowArgs {
+  username:           string;
+  project_dir:        string | null;
+  source:             "distilled" | "user";
+  type:               string;
+  source_session_id:  string | null;
+  name:               string;
+  description:        string;
+  body:               string;
+  facets:             Record<string, string[] | undefined>;
+  content_hash:       Buffer;
+}
+
+export async function insertMemoryRow(
+  client: PoolClient,
+  args:   InsertMemoryRowArgs,
+): Promise<string | null> {
+  const memId = randomUUID();
+  const ins = await client.query<{ memory_id: string }>(
+    `INSERT INTO memories (
+       memory_id, username, project_dir, type, source,
+       name, description, body, source_session_id, content_hash
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+     ON CONFLICT (username, project_dir, type, content_hash) DO NOTHING
+     RETURNING memory_id`,
+    [
+      memId, args.username, args.project_dir, args.type, args.source,
+      args.name, args.description, args.body, args.source_session_id, args.content_hash,
+    ],
+  );
+  if (ins.rowCount === 0) return null; // dedup; nothing else to write
+
+  const writtenId = ins.rows[0]!.memory_id;
+  const chunk = await client.query<{ chunk_id: string }>(
+    `INSERT INTO memory_chunks (memory_id, chunk_idx, content)
+     VALUES ($1, 0, $2) RETURNING chunk_id`,
+    [writtenId, args.body],
+  );
+  await client.query(
+    `INSERT INTO embedder_queue (chunk_id) VALUES ($1) ON CONFLICT DO NOTHING`,
+    [chunk.rows[0]!.chunk_id],
+  );
+  for (const [k, vs] of Object.entries(args.facets)) {
+    if (!vs) continue;
+    for (const v of vs) {
+      await client.query(
+        `INSERT INTO memory_facets (memory_id, key, value) VALUES ($1, $2, $3)
+         ON CONFLICT DO NOTHING`,
+        [writtenId, k, v],
+      );
+    }
+  }
+  return writtenId;
+}
+
 export async function writeDistillation(
   pool: Pool,
   args: WriteDistillationArgs,
@@ -46,7 +101,7 @@ export async function writeDistillation(
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await insertOne(client, args.sessionMeta, "session_summary", {
+    await insertDistilled(client, args.sessionMeta, "session_summary", {
       name:        args.result.summary.name,
       description: args.result.summary.description,
       body:        args.result.summary.body,
@@ -55,7 +110,7 @@ export async function writeDistillation(
 
     for (const obs of args.result.observations) {
       const memType = obs.type === "user-preference" ? "feedback" : "observation";
-      await insertOne(client, args.sessionMeta, memType, obs, args.promptVersion);
+      await insertDistilled(client, args.sessionMeta, memType, obs, args.promptVersion);
     }
     await client.query("COMMIT");
   } catch (e) {
@@ -66,7 +121,7 @@ export async function writeDistillation(
   }
 }
 
-async function insertOne(
+async function insertDistilled(
   client:        PoolClient,
   meta:          SessionMeta,
   memType:       string,
@@ -74,39 +129,16 @@ async function insertOne(
   promptVersion: number,
 ): Promise<void> {
   const hash = contentHash({ body: `${payload.name}\n${payload.body}`, promptVersion });
-  const memId = randomUUID();
-  const ins = await client.query<{ memory_id: string }>(
-    `INSERT INTO memories (
-       memory_id, username, project_dir, type, source,
-       name, description, body, source_session_id, content_hash
-     ) VALUES ($1, $2, $3, $4, 'distilled', $5, $6, $7, $8, $9)
-     ON CONFLICT (username, project_dir, type, content_hash) DO NOTHING
-     RETURNING memory_id`,
-    [
-      memId, meta.username, meta.project_dir, memType,
-      payload.name, payload.description, payload.body, meta.source_session_id, hash,
-    ],
-  );
-  if (ins.rowCount === 0) return; // dedup; nothing else to write
-
-  const writtenId = ins.rows[0]!.memory_id;
-  const chunk = await client.query<{ chunk_id: string }>(
-    `INSERT INTO memory_chunks (memory_id, chunk_idx, content)
-     VALUES ($1, 0, $2) RETURNING chunk_id`,
-    [writtenId, payload.body],
-  );
-  await client.query(
-    `INSERT INTO embedder_queue (chunk_id) VALUES ($1) ON CONFLICT DO NOTHING`,
-    [chunk.rows[0]!.chunk_id],
-  );
-  for (const [k, vs] of Object.entries(payload.facets)) {
-    if (!vs) continue;
-    for (const v of vs) {
-      await client.query(
-        `INSERT INTO memory_facets (memory_id, key, value) VALUES ($1, $2, $3)
-         ON CONFLICT DO NOTHING`,
-        [writtenId, k, v],
-      );
-    }
-  }
+  await insertMemoryRow(client, {
+    username:          meta.username,
+    project_dir:       meta.project_dir,
+    source:            "distilled",
+    type:              memType,
+    source_session_id: meta.source_session_id,
+    name:              payload.name,
+    description:       payload.description,
+    body:              payload.body,
+    facets:            payload.facets,
+    content_hash:      hash,
+  });
 }
