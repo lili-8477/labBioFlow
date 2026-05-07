@@ -20,12 +20,16 @@ afterAll(async () => {
 }, 30_000);
 
 describe("migration 0009 memory_audit_log", () => {
-  it("applies all 9 migrations and creates memory_audit_log table with indexes and constraints", async () => {
+  it("applies migrations through 0009 and creates memory_audit_log table with indexes and constraints", async () => {
     await runMigrations({ pool, migrationsDir: MIGRATIONS_DIR, lockKey: 0x62696f666c77n });
 
-    // Verify all 9 migrations applied
+    // Verify migrations 1..9 are present (later migrations may be added on top
+    // and that's fine — this test asserts the 0009 audit-log work landed).
     const v = await pool.query("SELECT version FROM schema_migrations ORDER BY version");
-    expect(v.rows.map((r) => r.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    const versions = v.rows.map((r) => r.version);
+    for (const expected of [1, 2, 3, 4, 5, 6, 7, 8, 9]) {
+      expect(versions).toContain(expected);
+    }
 
     // Verify memory_audit_log table exists
     const tables = await pool.query(

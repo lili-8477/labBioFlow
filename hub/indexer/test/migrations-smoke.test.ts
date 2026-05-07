@@ -20,11 +20,16 @@ afterAll(async () => {
 }, 30_000);
 
 describe("real migrations apply cleanly", () => {
-  it("applies 0001, 0002, 0003, 0004, 0005, 0006, 0007, 0008, 0009 against a fresh PG", async () => {
+  it("applies migrations 0001..NN against a fresh PG", async () => {
     await runMigrations({ pool, migrationsDir: MIGRATIONS_DIR, lockKey: 0x62696f666c77n });
 
+    // Assert every numbered migration we know about ran. Don't lock the exact
+    // count — adding a new migration shouldn't break this smoke test.
     const v = await pool.query("SELECT version FROM schema_migrations ORDER BY version");
-    expect(v.rows.map((r) => r.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    const versions = v.rows.map((r) => r.version);
+    for (const expected of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
+      expect(versions).toContain(expected);
+    }
 
     const tables = await pool.query(
       "SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename",
@@ -40,6 +45,7 @@ describe("real migrations apply cleanly", () => {
     expect(names).toContain("embedder_queue");
     expect(names).toContain("memory_distill_cursor");
     expect(names).toContain("memory_audit_log");
+    expect(names).toContain("share_requests");
     expect(names).toContain("schema_migrations");
 
     // Verify FK constraint on token_usage_log.session_id exists.
