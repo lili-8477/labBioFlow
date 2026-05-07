@@ -79,17 +79,10 @@ export async function submitShareRequest(args: SubmitArgs): Promise<SubmitResult
     return { ok: false, reason: "not_implemented" };
   }
 
-  // Validate ownership: must own the memory and it must not be soft-deleted.
-  const owned = await args.pool.query<{ memory_id: string }>(
-    `SELECT memory_id FROM memories
-      WHERE memory_id = $1 AND username = $2 AND deleted_at IS NULL`,
-    [args.ref, args.requester],
-  );
-  if ((owned.rowCount ?? 0) === 0) {
-    return { ok: false, reason: "forbidden" };
-  }
-
-  // Fetch full snapshot including aggregated facets.
+  // Single-query ownership check + snapshot fetch. Folding these into one
+  // round-trip both shrinks the race window between checking ownership and
+  // freezing the body, AND turns "not owned / soft-deleted" into "no rows"
+  // — same code path as the source not existing, so we don't leak which.
   const snap = await args.pool.query<{
     name:        string;
     description: string;
@@ -111,9 +104,14 @@ export async function submitShareRequest(args: SubmitArgs): Promise<SubmitResult
                            GROUP BY key
                         ) g), '{}'::jsonb) AS facets
        FROM memories m
-      WHERE m.memory_id = $1`,
-    [args.ref],
+      WHERE m.memory_id = $1
+        AND m.username  = $2
+        AND m.deleted_at IS NULL`,
+    [args.ref, args.requester],
   );
+  if ((snap.rowCount ?? 0) === 0) {
+    return { ok: false, reason: "forbidden" };
+  }
   const s = snap.rows[0]!;
   const snapshot_meta: Record<string, unknown> = {
     name:        s.name,
@@ -194,14 +192,31 @@ export async function listShareRequests(args: ListArgs): Promise<ListResult> {
     conditions.push(`status = $${params.length}`);
   }
 
+  // Cursor format is "ISO|share_id" so two rows sharing created_at to
+  // microsecond precision (same-transaction inserts, deterministic seeders)
+  // can still page deterministically by the share_id tiebreaker. Plain ISO
+  // cursors from older clients fall back to created_at-only filtering.
   if (args.cursor !== undefined) {
-    params.push(args.cursor);
-    conditions.push(`created_at < $${params.length}::timestamptz`);
+    const [cursorTs, cursorId] = args.cursor.includes("|")
+      ? args.cursor.split("|", 2) as [string, string]
+      : [args.cursor, null];
+    if (cursorId === null) {
+      params.push(cursorTs);
+      conditions.push(`created_at < $${params.length}::timestamptz`);
+    } else {
+      params.push(cursorTs);
+      params.push(cursorId);
+      conditions.push(
+        `(created_at, share_id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`,
+      );
+    }
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
   params.push(limit + 1);
-  const sql = `SELECT * FROM share_requests ${where} ORDER BY created_at DESC LIMIT $${params.length}`;
+  const sql = `SELECT * FROM share_requests ${where}
+                ORDER BY created_at DESC, share_id DESC
+                LIMIT $${params.length}`;
 
   const result = await args.pool.query<ShareRow>(sql, params);
   const rows = result.rows;
@@ -209,7 +224,8 @@ export async function listShareRequests(args: ListArgs): Promise<ListResult> {
   let next_cursor: string | null = null;
   if (rows.length > limit) {
     rows.splice(limit);
-    next_cursor = rows[rows.length - 1]!.created_at.toISOString();
+    const tail = rows[rows.length - 1]!;
+    next_cursor = `${tail.created_at.toISOString()}|${tail.share_id}`;
   }
 
   return { items: rows.map(mapRow), next_cursor };
@@ -297,12 +313,30 @@ export async function decideShareRequest(args: DecideArgs): Promise<DecideResult
       };
     }
 
-    const snap = row.snapshot_meta as {
+    // Validate snapshot shape before trusting the cast. Older rows or
+    // future externally-written snapshots could land here malformed; we'd
+    // rather emit promotion_failed (auditable, recoverable) than crash
+    // deep inside insertMemoryRow against a NOT NULL constraint.
+    const rawSnap = row.snapshot_meta as Record<string, unknown>;
+    if (
+      typeof rawSnap.name        !== "string" ||
+      typeof rawSnap.description !== "string" ||
+      typeof rawSnap.body        !== "string" ||
+      typeof rawSnap.type        !== "string" ||
+      typeof rawSnap.facets      !== "object" || rawSnap.facets === null
+    ) {
+      await client.query("ROLLBACK");
+      return {
+        ok:     false,
+        reason: "promotion_failed",
+        detail: "snapshot_meta is missing required string fields (name/description/body/type/facets)",
+      };
+    }
+    const snap = rawSnap as {
       name:        string;
       description: string;
       body:        string;
       type:        string;
-      source:      string;
       facets:      Record<string, string[] | undefined>;
     };
 

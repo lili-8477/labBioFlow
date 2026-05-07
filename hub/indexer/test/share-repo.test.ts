@@ -283,6 +283,34 @@ describe("listShareRequests", () => {
 
     expect(collected).toEqual(refIds);
   });
+
+  it("cursor pagination is stable when multiple rows share created_at to microsecond precision", async () => {
+    // Insert 6 rows then crush their created_at to a single timestamp — exactly
+    // the case where a created_at-only cursor would skip rows. The (created_at,
+    // share_id) tuple cursor must traverse all 6.
+    for (let i = 0; i < 6; i++) {
+      await seedRequest({ requester: ALICE });
+    }
+    await pool.query(
+      `UPDATE share_requests SET created_at = '2026-05-07T12:00:00Z' WHERE requester = $1`,
+      [ALICE],
+    );
+
+    const collected = new Set<string>();
+    let cursor: string | undefined = undefined;
+    let pages = 0;
+    do {
+      const page = await listShareRequests({
+        pool, actor: ALICE, manager: MANAGER, role: "outbox", limit: 2, cursor,
+      });
+      for (const item of page.items) collected.add(item.share_id);
+      cursor = page.next_cursor ?? undefined;
+      pages++;
+      expect(pages).toBeLessThanOrEqual(4);  // 6 rows / 2 per page = 3 pages, +1 buffer
+    } while (cursor !== undefined);
+
+    expect(collected.size).toBe(6);
+  });
 });
 
 // ─── getShareRequest ─────────────────────────────────────────────────────────
@@ -496,6 +524,31 @@ describe("decideShareRequest", () => {
 
     // Status must remain pending — the failed approve rolled back, leaving the request
     // open for the manager to either reject it or retry once skill kind ships.
+    const sr = await pool.query<{ status: string }>(
+      `SELECT status FROM share_requests WHERE share_id = $1`,
+      [shareId],
+    );
+    expect(sr.rows[0]!.status).toBe("pending");
+  });
+
+  it("approve on row with malformed snapshot_meta returns promotion_failed (defense against bad jsonb)", async () => {
+    // Inject a memory-kind row whose snapshot is missing required fields.
+    // submitShareRequest never produces this shape, but a future external
+    // writer or schema migration could; the guard must catch it.
+    const shareId = randomUUID();
+    await pool.query(
+      `INSERT INTO share_requests
+         (share_id, artifact_kind, artifact_ref, snapshot_meta, requester, reviewer)
+       VALUES ($1, 'memory', 'm-x', $2::jsonb, $3, $4)`,
+      [shareId, { not_a_snapshot: true }, ALICE, MANAGER],
+    );
+    const result = await decideShareRequest({
+      pool, actor: MANAGER, manager: MANAGER, shareId, decision: "approve",
+    });
+    expect(result).toMatchObject({ ok: false, reason: "promotion_failed" });
+    if (result.ok) throw new Error("unreachable");
+    expect(result.detail).toMatch(/snapshot_meta/);
+
     const sr = await pool.query<{ status: string }>(
       `SELECT status FROM share_requests WHERE share_id = $1`,
       [shareId],
