@@ -108,6 +108,7 @@ services:
       EMBEDDER_URL: http://embedder:8000
       EMBEDDER_BATCH_SIZE: "64"
       EMBEDDER_INTERVAL_MS: "5000"
+      MEMORY_ORG_MANAGER: li86
     volumes:
       - ./workspaces:/workspaces:ro
     depends_on:

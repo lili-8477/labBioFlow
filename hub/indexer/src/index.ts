@@ -22,6 +22,15 @@ import {
   getMetrics,
 } from "./memory-repo.js";
 import { writeDistillation } from "./distiller-repo.js";
+import { shareRoutesPlugin } from "./share-api.js";
+import {
+  submitShareRequest,
+  listShareRequests,
+  getShareRequest,
+  decideShareRequest,
+  withdrawShareRequest,
+  getShareCapabilities,
+} from "./share-repo.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -96,6 +105,19 @@ async function main(): Promise<void> {
       writeDistillation,
     },
   });
+  await app.register(shareRoutesPlugin({
+    pool,
+    manager: cfg.memoryOrgManager,
+    repo: {
+      submitShareRequest,
+      listShareRequests,
+      getShareRequest,
+      decideShareRequest,
+      withdrawShareRequest,
+      getShareCapabilities,
+    },
+  }));
+
   await app.listen({ port: cfg.memoryApiPort, host: "0.0.0.0" });
   logger.info({ port: cfg.memoryApiPort }, "memory-api listening");
 
