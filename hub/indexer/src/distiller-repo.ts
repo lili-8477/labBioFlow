@@ -30,7 +30,9 @@ export async function findSettledSessions(
 export interface SessionMeta {
   username:           string;
   project_dir:        string | null;
-  source_session_id:  string;
+  // Nullable because /memory/distill (agent-driven) may not know the session
+  // UUID, and user-authored memories elsewhere already pass NULL.
+  source_session_id:  string | null;
 }
 
 export interface WriteDistillationArgs {

@@ -5,6 +5,7 @@ import {
   callMemoryTimeline,
   callMemoryWrite,
   callMemoryForget,
+  callMemoryDistillSession,
   toolDefinitions,
 } from "../src/index.js";
 
@@ -37,9 +38,10 @@ const baseDeps = (stub: typeof fetch) => ({
 });
 
 describe("toolDefinitions", () => {
-  it("exposes exactly the five memory tools", () => {
+  it("exposes exactly the six memory tools", () => {
     const names = toolDefinitions.map((t) => t.name).sort();
     expect(names).toEqual([
+      "memory_distill_session",
       "memory_forget",
       "memory_get",
       "memory_search",
@@ -280,6 +282,100 @@ describe("callMemoryWrite", () => {
     );
     const result = await callMemoryWrite(
       { scope: "user", type: "user", name: "x", description: "x", body: "" },
+      baseDeps(stub),
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain("validation failed");
+  });
+});
+
+describe("callMemoryDistillSession", () => {
+  const validSummary = { name: "n", description: "d", body: "b" };
+  const validObs = [{
+    type: "decision", name: "n", description: "d", body: "b", facets: { tool: ["seqkit"] },
+  }];
+
+  it("POSTs /memory/distill with username from deps and payload from caller", async () => {
+    const { stub, calls } = makeFetchStub(
+      new Response(JSON.stringify({ ok: true, written: 2 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const result = await callMemoryDistillSession(
+      {
+        project_dir: "-home-alice-proj",
+        source_session_id: "abc-123",
+        summary: validSummary,
+        observations: validObs,
+      },
+      baseDeps(stub),
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe("http://stub:8400/memory/distill");
+    expect(calls[0]!.init.method).toBe("POST");
+    const body = JSON.parse(calls[0]!.init.body as string);
+    expect(body).toEqual({
+      username: "alice",
+      project_dir: "-home-alice-proj",
+      source_session_id: "abc-123",
+      summary: validSummary,
+      observations: validObs,
+    });
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(result.content[0]!.text)).toEqual({ ok: true, written: 2 });
+  });
+
+  it("omits project_dir/source_session_id when not supplied", async () => {
+    const { stub, calls } = makeFetchStub(
+      new Response("{}", { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    await callMemoryDistillSession(
+      { summary: validSummary, observations: [] },
+      baseDeps(stub),
+    );
+    const body = JSON.parse(calls[0]!.init.body as string);
+    expect(body.username).toBe("alice");
+    expect(body.observations).toEqual([]);
+    expect("project_dir" in body).toBe(false);
+    expect("source_session_id" in body).toBe(false);
+  });
+
+  it("rejects missing summary WITHOUT making an HTTP call", async () => {
+    const { stub, calls } = makeFetchStub(
+      new Response("{}", { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    const result = await callMemoryDistillSession(
+      { observations: [] },
+      baseDeps(stub),
+    );
+    expect(calls).toHaveLength(0);
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toMatch(/'summary' object is required/);
+  });
+
+  it("rejects non-array observations WITHOUT making an HTTP call", async () => {
+    const { stub, calls } = makeFetchStub(
+      new Response("{}", { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    const result = await callMemoryDistillSession(
+      { summary: validSummary, observations: "nope" },
+      baseDeps(stub),
+    );
+    expect(calls).toHaveLength(0);
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toMatch(/'observations' array is required/);
+  });
+
+  it("surfaces 400 validation errors from memory-api", async () => {
+    const { stub } = makeFetchStub(
+      new Response(
+        JSON.stringify({ error: "validation failed", issues: [{ path: ["summary", "body"] }] }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      ),
+    );
+    const result = await callMemoryDistillSession(
+      { summary: validSummary, observations: [] },
       baseDeps(stub),
     );
     expect(result.isError).toBe(true);

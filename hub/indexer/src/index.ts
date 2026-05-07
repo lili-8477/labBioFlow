@@ -2,15 +2,11 @@ import { Pool } from "pg";
 import pino from "pino";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import Anthropic from "@anthropic-ai/sdk";
 import { loadConfig } from "./config.js";
 import { runMigrations } from "./migrate.js";
 import { startWatcher } from "./watcher.js";
-import { distill } from "./llm-client.js";
-import { runDistillerOnce } from "./distiller.js";
 import { runEmbedderOnce } from "./embedder-worker.js";
 import { embedTexts } from "./embedder-client.js";
-import { readSessionJsonl } from "./transcript-reader.js";
 import { buildApp } from "./memory-api.js";
 import {
   searchMemories,
@@ -25,6 +21,7 @@ import {
   getAuditTrail,
   getMetrics,
 } from "./memory-repo.js";
+import { writeDistillation } from "./distiller-repo.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -51,29 +48,12 @@ async function main(): Promise<void> {
     logger,
   });
 
-  const anthropic = new Anthropic({ apiKey: cfg.anthropicApiKey });
-
-  const startDistillerLoop = (): void => {
-    const tick = async (): Promise<void> => {
-      try {
-        const summary = await runDistillerOnce(pool, {
-          llm: (transcript) =>
-            distill({ transcript, anthropic, model: cfg.distillModel, maxTokens: 4096 }),
-          readTranscript:    (s) => readSessionJsonl(cfg.workspacesRoot, s),
-          settleSeconds:     cfg.distillSettleSec,
-          perUserLimit:      cfg.distillBatchSize,
-          maxDistillTokens:  cfg.distillMaxTokens,
-          promptVersion:     cfg.distillPromptVersion,
-        });
-        logger.info({ summary }, "distiller pass");
-      } catch (err) {
-        logger.error({ err }, "distiller pass crashed");
-      } finally {
-        setTimeout(tick, cfg.distillIntervalSec * 1000);
-      }
-    };
-    setTimeout(tick, cfg.distillIntervalSec * 1000);
-  };
+  // Auto-distill loop removed: was generating low-signal session_summary +
+  // observation rows on every settled session, polluting recall. Replaced by
+  // agent-on-demand distill via the /memory slash command → bioflow-memory
+  // memory_distill_session MCP tool → POST /memory/distill. Distillation
+  // helpers (writeDistillation, distiller.ts, llm-client.ts) are kept in
+  // place because tests and the new endpoint still use writeDistillation.
 
   const startEmbedderLoop = (): void => {
     const tick = async (): Promise<void> => {
@@ -94,7 +74,6 @@ async function main(): Promise<void> {
     setTimeout(tick, cfg.embedderIntervalMs);
   };
 
-  startDistillerLoop();
   startEmbedderLoop();
 
   const app = buildApp({
@@ -114,6 +93,7 @@ async function main(): Promise<void> {
       listMemories,
       getAuditTrail,
       getMetrics,
+      writeDistillation,
     },
   });
   await app.listen({ port: cfg.memoryApiPort, host: "0.0.0.0" });

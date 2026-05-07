@@ -14,6 +14,8 @@ import type {
   getAuditTrail,
   getMetrics,
 } from "./memory-repo.js";
+import type { writeDistillation } from "./distiller-repo.js";
+import { PROMPT_VERSION } from "./distiller-prompts.js";
 
 // DI seam: production wires real repo functions; tests pass vi.fn stubs. Pool
 // and embedderClient travel as a bag so the same `repo.searchMemories` shape
@@ -33,6 +35,7 @@ export interface MemoryApiDeps {
     listMemories:     typeof listMemories;
     getAuditTrail:    typeof getAuditTrail;
     getMetrics:       typeof getMetrics;
+    writeDistillation: typeof writeDistillation;
   };
 }
 
@@ -114,6 +117,37 @@ const ListQuery = z.object({
 const AuditQuery = z.object({
   actor: z.string().min(1),
   limit: z.coerce.number().int().positive().max(100).optional(),
+});
+
+// /memory/distill payload mirrors distiller-prompts.ts `DistillationResult` so
+// agent-side and (formerly) server-side distill paths share dedup semantics
+// via the same content_hash construction in distiller-repo.ts.
+const DistillSummary = z.object({
+  name:        z.string().min(1).max(80),
+  description: z.string().max(200),
+  body:        z.string().max(1500),
+});
+
+const DistillObservation = z.object({
+  type: z.enum(["decision", "finding", "file-touched", "command-result", "user-preference"]),
+  name:        z.string().min(1).max(80),
+  description: z.string().max(200),
+  body:        z.string().max(800),
+  facets: z.object({
+    gene:     z.array(z.string()).optional(),
+    dataset:  z.array(z.string()).optional(),
+    tool:     z.array(z.string()).optional(),
+    pipeline: z.array(z.string()).optional(),
+    file:     z.array(z.string()).optional(),
+  }).strict(),
+});
+
+const DistillBody = z.object({
+  username:          z.string().min(1),
+  project_dir:       z.string().nullable().optional(),
+  source_session_id: z.string().nullable().optional(),
+  summary:           DistillSummary,
+  observations:      z.array(DistillObservation).max(8),
 });
 
 export function buildApp(deps: MemoryApiDeps): FastifyInstance {
@@ -231,6 +265,32 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
       body:        b.body,
       facets:      b.facets,
     });
+  });
+
+  // POST /memory/distill — agent-driven on-demand distill. Caller (the
+  // bioflow-memory MCP server) supplies a {summary, observations} payload
+  // produced by the in-session agent itself; we just write rows. Auto-distill
+  // (the polled cron-style loop) is disabled; this is the only path now.
+  app.post("/memory/distill", async (req, reply) => {
+    const parsed = DistillBody.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: "validation failed", issues: parsed.error.issues };
+    }
+    const b = parsed.data;
+    await deps.repo.writeDistillation(deps.pool, {
+      sessionMeta: {
+        username:          b.username,
+        project_dir:       b.project_dir ?? null,
+        source_session_id: b.source_session_id ?? null,
+      },
+      result: { summary: b.summary, observations: b.observations },
+      promptVersion: PROMPT_VERSION,
+    });
+    // Counts (1 summary + N observations) are best-effort; the underlying
+    // insert is idempotent so dedup may suppress some rows. Returning the
+    // attempted count keeps the surface honest without an extra SELECT.
+    return { ok: true, attempted: 1 + b.observations.length };
   });
 
   // POST /memory/forget — soft-delete with username scoping; idempotent

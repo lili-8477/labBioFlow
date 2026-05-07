@@ -23,6 +23,7 @@ function makeDeps(): { deps: MemoryApiDeps; repo: {
   listMemories:     ReturnType<typeof vi.fn>;
   getAuditTrail:    ReturnType<typeof vi.fn>;
   getMetrics:       ReturnType<typeof vi.fn>;
+  writeDistillation: ReturnType<typeof vi.fn>;
 } } {
   const repo = {
     searchMemories:   vi.fn(async (): Promise<SearchHit[]>     => []),
@@ -45,6 +46,7 @@ function makeDeps(): { deps: MemoryApiDeps; repo: {
       distill_cursor_lag_seconds_max: 0,
       audit_log_size: 0,
     })),
+    writeDistillation: vi.fn(async (): Promise<void> => {}),
   };
   const deps: MemoryApiDeps = {
     pool: {} as Pool,
@@ -620,6 +622,88 @@ describe("memory-api", () => {
       expect(res.statusCode).toBe(400);
       expect(res.json()).toMatchObject({ error: "validation failed", issues: expect.any(Array) });
       expect(depsBag.repo.getAuditTrail).not.toHaveBeenCalled();
+    });
+  });
+
+  // ────────────────────────────── /memory/distill ──────────────────────────
+
+  describe("POST /memory/distill", () => {
+    const validBody = {
+      username:    "alice",
+      project_dir: "-home-alice-proj",
+      summary: { name: "n", description: "d", body: "b" },
+      observations: [
+        { type: "decision", name: "n", description: "d", body: "b", facets: { tool: ["seqkit"] } },
+      ],
+    };
+
+    it("happy path: forwards summary+observations to writeDistillation, returns attempted count", async () => {
+      const res = await app.inject({ method: "POST", url: "/memory/distill", payload: validBody });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ ok: true, attempted: 2 });
+      expect(depsBag.repo.writeDistillation).toHaveBeenCalledTimes(1);
+      const arg = depsBag.repo.writeDistillation.mock.calls[0]![1];
+      expect(arg.sessionMeta.username).toBe("alice");
+      expect(arg.sessionMeta.project_dir).toBe("-home-alice-proj");
+      expect(arg.sessionMeta.source_session_id).toBeNull();
+      expect(arg.result.summary).toEqual(validBody.summary);
+      expect(arg.result.observations).toEqual(validBody.observations);
+    });
+
+    it("empty observations array is valid; attempted=1", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/memory/distill",
+        payload: { ...validBody, observations: [] },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ ok: true, attempted: 1 });
+    });
+
+    it("source_session_id is forwarded when provided", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/memory/distill",
+        payload: { ...validBody, source_session_id: "abc-123" },
+      });
+      expect(res.statusCode).toBe(200);
+      const arg = depsBag.repo.writeDistillation.mock.calls[0]![1];
+      expect(arg.sessionMeta.source_session_id).toBe("abc-123");
+    });
+
+    it("rejects payload missing summary with 400", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/memory/distill",
+        payload: { username: "alice", observations: [] },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(depsBag.repo.writeDistillation).not.toHaveBeenCalled();
+    });
+
+    it("rejects observation with invalid type with 400", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/memory/distill",
+        payload: {
+          ...validBody,
+          observations: [{ type: "speculation", name: "n", description: "d", body: "b", facets: {} }],
+        },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(depsBag.repo.writeDistillation).not.toHaveBeenCalled();
+    });
+
+    it("rejects more than 8 observations with 400", async () => {
+      const obs = Array.from({ length: 9 }, () => ({
+        type: "finding", name: "n", description: "d", body: "b", facets: {},
+      }));
+      const res = await app.inject({
+        method: "POST",
+        url: "/memory/distill",
+        payload: { ...validBody, observations: obs },
+      });
+      expect(res.statusCode).toBe(400);
     });
   });
 

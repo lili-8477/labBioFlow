@@ -100,6 +100,55 @@ export const toolDefinitions = [
       required: ["memory_id"],
     },
   },
+  {
+    name: "memory_distill_session",
+    description:
+      "Pin the current conversation to long-term memory. The agent itself produces a structured summary + 0..8 observations from its own context (no server-side re-summarisation). Call ONCE per /memory invocation; subsequent calls in the same session create duplicate rows. Observations should capture decisions, findings, file changes, command results, or user preferences worth recalling later — skip operational noise.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_dir:       { type: "string", description: "Encoded project dir (e.g. -home-alice-proj). Omit for user-scope distill." },
+        source_session_id: { type: "string", description: "Optional session UUID this distill came from; omit if not known." },
+        summary: {
+          type: "object",
+          description: "Single session-summary row. name ≤80c, description ≤200c, body ≤1500c.",
+          properties: {
+            name:        { type: "string", maxLength: 80 },
+            description: { type: "string", maxLength: 200 },
+            body:        { type: "string", maxLength: 1500 },
+          },
+          required: ["name", "description", "body"],
+        },
+        observations: {
+          type: "array",
+          maxItems: 8,
+          description: "0..8 observation rows. Each is independently dedup'd by content hash.",
+          items: {
+            type: "object",
+            properties: {
+              type: { type: "string", enum: ["decision", "finding", "file-touched", "command-result", "user-preference"] },
+              name:        { type: "string", maxLength: 80 },
+              description: { type: "string", maxLength: 200 },
+              body:        { type: "string", maxLength: 800 },
+              facets: {
+                type: "object",
+                properties: {
+                  gene:     { type: "array", items: { type: "string" } },
+                  dataset:  { type: "array", items: { type: "string" } },
+                  tool:     { type: "array", items: { type: "string" } },
+                  pipeline: { type: "array", items: { type: "string" } },
+                  file:     { type: "array", items: { type: "string" } },
+                },
+                additionalProperties: false,
+              },
+            },
+            required: ["type", "name", "description", "body", "facets"],
+          },
+        },
+      },
+      required: ["summary", "observations"],
+    },
+  },
 ] as const;
 
 // ─── deps & result types ───────────────────────────────────────────────
@@ -228,6 +277,34 @@ export async function callMemoryWrite(args: any, deps: ToolDeps): Promise<ToolRe
   }
 }
 
+export async function callMemoryDistillSession(args: any, deps: ToolDeps): Promise<ToolResult> {
+  // Cheap up-front shape check so a malformed call gets a crisp error instead
+  // of a 400 with a zod issue list. The API revalidates regardless.
+  if (!args?.summary || typeof args.summary !== "object") {
+    return fail("memory_distill_session: 'summary' object is required");
+  }
+  if (!Array.isArray(args?.observations)) {
+    return fail("memory_distill_session: 'observations' array is required (use [] for none)");
+  }
+  const body: Record<string, unknown> = {
+    username:     deps.username,
+    summary:      args.summary,
+    observations: args.observations,
+  };
+  if (args?.project_dir       !== undefined) body.project_dir       = args.project_dir;
+  if (args?.source_session_id !== undefined) body.source_session_id = args.source_session_id;
+  try {
+    const res = await deps.fetch(`${deps.baseUrl}/memory/distill`, {
+      method:  "POST",
+      headers: { "content-type": "application/json" },
+      body:    JSON.stringify(body),
+    });
+    return await unwrap(res, "memory_distill_session");
+  } catch (err) {
+    return fail(`memory_distill_session network error: ${(err as Error).message}`);
+  }
+}
+
 export async function callMemoryForget(args: any, deps: ToolDeps): Promise<ToolResult> {
   // Validate the one required arg up front so we don't issue a POST that the
   // API would reject anyway — saves a round trip and gives the agent a
@@ -285,6 +362,7 @@ async function main(): Promise<void> {
       case "memory_timeline": result = await callMemoryTimeline(args, deps); break;
       case "memory_write":    result = await callMemoryWrite(args, deps); break;
       case "memory_forget":   result = await callMemoryForget(args, deps); break;
+      case "memory_distill_session": result = await callMemoryDistillSession(args, deps); break;
       default:                result = fail(`unknown tool: ${name}`); break;
     }
     // SDK 1.x widened CallToolResult to include a "task" variant (long-running
