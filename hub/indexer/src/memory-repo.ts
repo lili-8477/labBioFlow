@@ -590,6 +590,66 @@ export async function updateMemory(args: {
   }
 }
 
+export async function restoreMemory(args: {
+  pool:     Pool;
+  actor:    string;
+  memoryId: string;
+}): Promise<{ ok: boolean; reason?: 'not_found' | 'forbidden' | 'not_deleted' }> {
+  const client = await args.pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const sel = await client.query<{ username: string; deleted_at: Date | null }>(
+      `SELECT username, deleted_at
+         FROM memories
+        WHERE memory_id = $1
+        FOR UPDATE`,
+      [args.memoryId],
+    );
+
+    if (sel.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return { ok: false, reason: 'not_found' };
+    }
+
+    const row = sel.rows[0]!;
+
+    if (row.username !== args.actor) {
+      await client.query("ROLLBACK");
+      return { ok: false, reason: 'forbidden' };
+    }
+
+    if (row.deleted_at === null) {
+      await client.query("ROLLBACK");
+      return { ok: false, reason: 'not_deleted' };
+    }
+
+    await client.query(
+      `UPDATE memories
+          SET deleted_at = NULL,
+              updated_at = now()
+        WHERE memory_id = $1`,
+      [args.memoryId],
+    );
+
+    await appendAudit(client, {
+      memory_id: args.memoryId,
+      actor:     args.actor,
+      action:    'restore',
+      before:    { deleted_at: row.deleted_at },
+      after:     { deleted_at: null },
+    });
+
+    await client.query("COMMIT");
+    return { ok: true };
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 export interface GetContextArgs {
   pool:          Pool;
   username:      string;

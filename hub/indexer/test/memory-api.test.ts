@@ -18,6 +18,7 @@ function makeDeps(): { deps: MemoryApiDeps; repo: {
   forgetMemory:     ReturnType<typeof vi.fn>;
   getContext:       ReturnType<typeof vi.fn>;
   updateMemory:     ReturnType<typeof vi.fn>;
+  restoreMemory:    ReturnType<typeof vi.fn>;
 } } {
   const repo = {
     searchMemories:   vi.fn(async (): Promise<SearchHit[]>     => []),
@@ -27,6 +28,7 @@ function makeDeps(): { deps: MemoryApiDeps; repo: {
     forgetMemory:     vi.fn(async (): Promise<{ ok: boolean }> => ({ ok: true })),
     getContext:       vi.fn(async (): Promise<MemoryContext>   => ({ system_prompt: "", memory_ids: [] })),
     updateMemory:     vi.fn(async (): Promise<{ ok: boolean; reason?: 'not_found' | 'forbidden' | 'distilled' }> => ({ ok: true })),
+    restoreMemory:    vi.fn(async (): Promise<{ ok: boolean; reason?: 'not_found' | 'forbidden' | 'not_deleted' }> => ({ ok: true })),
   };
   const deps: MemoryApiDeps = {
     pool: {} as Pool,
@@ -396,6 +398,72 @@ describe("memory-api", () => {
       expect(res.statusCode).toBe(400);
       expect(res.json()).toMatchObject({ error: "validation failed", issues: expect.any(Array) });
       expect(depsBag.repo.updateMemory).not.toHaveBeenCalled();
+    });
+  });
+
+  // ───────────────────── POST /memory/:id/restore ─────────────────────────────
+
+  describe("POST /memory/:id/restore", () => {
+    const validPayload = { actor: "alice" };
+
+    it("happy path: calls restoreMemory and returns {ok:true}", async () => {
+      depsBag.repo.restoreMemory.mockResolvedValueOnce({ ok: true });
+      const res = await app.inject({
+        method:  "POST",
+        url:     "/memory/abc-123/restore",
+        payload: validPayload,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ ok: true });
+      expect(depsBag.repo.restoreMemory).toHaveBeenCalledTimes(1);
+      const arg = depsBag.repo.restoreMemory.mock.calls[0]![0];
+      expect(arg.actor).toBe("alice");
+      expect(arg.memoryId).toBe("abc-123");
+      expect(arg.pool).toBe(depsBag.deps.pool);
+    });
+
+    it("404 when repo returns not_found", async () => {
+      depsBag.repo.restoreMemory.mockResolvedValueOnce({ ok: false, reason: "not_found" });
+      const res = await app.inject({
+        method:  "POST",
+        url:     "/memory/missing-id/restore",
+        payload: validPayload,
+      });
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toMatchObject({ error: "memory not found" });
+    });
+
+    it("403 when repo returns forbidden", async () => {
+      depsBag.repo.restoreMemory.mockResolvedValueOnce({ ok: false, reason: "forbidden" });
+      const res = await app.inject({
+        method:  "POST",
+        url:     "/memory/other-users-id/restore",
+        payload: validPayload,
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json()).toMatchObject({ error: "not the owner" });
+    });
+
+    it("409 when repo returns not_deleted (memory is still live)", async () => {
+      depsBag.repo.restoreMemory.mockResolvedValueOnce({ ok: false, reason: "not_deleted" });
+      const res = await app.inject({
+        method:  "POST",
+        url:     "/memory/live-id/restore",
+        payload: validPayload,
+      });
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toMatchObject({ error: "memory is not deleted" });
+    });
+
+    it("400 when actor is missing", async () => {
+      const res = await app.inject({
+        method:  "POST",
+        url:     "/memory/abc-123/restore",
+        payload: {},
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({ error: "validation failed", issues: expect.any(Array) });
+      expect(depsBag.repo.restoreMemory).not.toHaveBeenCalled();
     });
   });
 });

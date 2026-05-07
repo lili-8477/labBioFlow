@@ -9,6 +9,7 @@ import type {
   forgetMemory,
   getContext,
   updateMemory,
+  restoreMemory,
 } from "./memory-repo.js";
 
 // DI seam: production wires real repo functions; tests pass vi.fn stubs. Pool
@@ -25,6 +26,7 @@ export interface MemoryApiDeps {
     forgetMemory:     typeof forgetMemory;
     getContext:       typeof getContext;
     updateMemory:     typeof updateMemory;
+    restoreMemory:    typeof restoreMemory;
   };
 }
 
@@ -79,6 +81,8 @@ const UpdateBody = z.object({
   description: z.string(),
   body:        z.string().min(1),
 });
+
+const RestoreBody = z.object({ actor: z.string().min(1) });
 
 export function buildApp(deps: MemoryApiDeps): FastifyInstance {
   const app = Fastify({ logger: false });
@@ -205,6 +209,19 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
     if (!r.ok && r.reason === 'not_found') { reply.code(404); return { error: 'memory not found' }; }
     if (!r.ok && r.reason === 'forbidden')  { reply.code(403); return { error: 'not the owner' }; }
     if (!r.ok && r.reason === 'distilled')  { reply.code(403); return { error: 'distilled memories are read-only' }; }
+    return { ok: true };
+  });
+
+  // POST /memory/:id/restore — undelete a soft-deleted memory. Owner-only.
+  // 409 Conflict when the row is already live (not_deleted is a state mismatch,
+  // not a validation problem). Registered before GET /memory/:id.
+  app.post<{ Params: { id: string } }>("/memory/:id/restore", async (req, reply) => {
+    const parsed = RestoreBody.safeParse(req.body);
+    if (!parsed.success) { reply.code(400); return { error: 'validation failed', issues: parsed.error.issues }; }
+    const r = await deps.repo.restoreMemory({ pool: deps.pool, actor: parsed.data.actor, memoryId: req.params.id });
+    if (!r.ok && r.reason === 'not_found')   { reply.code(404); return { error: 'memory not found' }; }
+    if (!r.ok && r.reason === 'forbidden')   { reply.code(403); return { error: 'not the owner' }; }
+    if (!r.ok && r.reason === 'not_deleted') { reply.code(409); return { error: 'memory is not deleted' }; }
     return { ok: true };
   });
 

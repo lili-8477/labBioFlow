@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { runMigrations } from "../src/migrate.js";
 import { insertMemoryRow } from "../src/distiller-repo.js";
 import { contentHash } from "../src/content-hash.js";
-import { searchMemories, getMemory, timelineMemories, writeUserMemory, forgetMemory, getContext, updateMemory } from "../src/memory-repo.js";
+import { searchMemories, getMemory, timelineMemories, writeUserMemory, forgetMemory, getContext, updateMemory, restoreMemory } from "../src/memory-repo.js";
 
 const MIGRATIONS_DIR = fileURLToPath(new URL("../migrations/", import.meta.url));
 let pg: StartedPostgreSqlContainer;
@@ -929,5 +929,104 @@ describe("updateMemory", () => {
       [id],
     );
     expect(parseInt(countAfter.rows[0]!.count) - parseInt(countBefore.rows[0]!.count)).toBe(1);
+  });
+});
+
+describe("restoreMemory", () => {
+  it("happy path: restores a soft-deleted row, clears deleted_at, writes audit row", async () => {
+    const id = await seedMemory({
+      username: "alice", project_dir: null,
+      body: "to be restored", seed: 800,
+    });
+    // Soft-delete it first
+    await forgetMemory({ pool, username: "alice", memoryId: id });
+    const deletedRow = await pool.query<{ deleted_at: Date | null }>(
+      `SELECT deleted_at FROM memories WHERE memory_id = $1`,
+      [id],
+    );
+    expect(deletedRow.rows[0]!.deleted_at).not.toBeNull();
+    const oldDeletedAt = deletedRow.rows[0]!.deleted_at!;
+
+    const res = await restoreMemory({ pool, actor: "alice", memoryId: id });
+    expect(res).toEqual({ ok: true });
+
+    // deleted_at is cleared
+    const after = await pool.query<{ deleted_at: Date | null }>(
+      `SELECT deleted_at FROM memories WHERE memory_id = $1`,
+      [id],
+    );
+    expect(after.rows[0]!.deleted_at).toBeNull();
+
+    // audit row has action='restore', correct before/after
+    const audit = await pool.query<{ action: string; before: unknown; after: unknown }>(
+      `SELECT action, before, after FROM memory_audit_log
+        WHERE memory_id = $1 AND action = 'restore'`,
+      [id],
+    );
+    expect(audit.rowCount).toBe(1);
+    const auditBefore = audit.rows[0]!.before as Record<string, unknown>;
+    const auditAfter  = audit.rows[0]!.after  as Record<string, unknown>;
+    // before.deleted_at should encode the timestamp we captured
+    expect(auditBefore.deleted_at).not.toBeNull();
+    expect(new Date(auditBefore.deleted_at as string).getTime()).toBeCloseTo(oldDeletedAt.getTime(), -3);
+    expect(auditAfter.deleted_at).toBeNull();
+  });
+
+  it("not_deleted: returns {ok:false, reason:'not_deleted'} for a live row", async () => {
+    const id = await seedMemory({
+      username: "alice", project_dir: null,
+      body: "still alive", seed: 801,
+    });
+    const res = await restoreMemory({ pool, actor: "alice", memoryId: id });
+    expect(res).toEqual({ ok: false, reason: "not_deleted" });
+  });
+
+  it("non-owner: returns {ok:false, reason:'forbidden'}", async () => {
+    const id = await seedMemory({
+      username: "bob", project_dir: null,
+      body: "bob's memory", seed: 802,
+    });
+    // Soft-delete as bob
+    await pool.query("UPDATE memories SET deleted_at = now() WHERE memory_id = $1", [id]);
+
+    const res = await restoreMemory({ pool, actor: "alice", memoryId: id });
+    expect(res).toEqual({ ok: false, reason: "forbidden" });
+
+    // Row must still be deleted
+    const row = await pool.query<{ deleted_at: Date | null }>(
+      `SELECT deleted_at FROM memories WHERE memory_id = $1`,
+      [id],
+    );
+    expect(row.rows[0]!.deleted_at).not.toBeNull();
+  });
+
+  it("not_found: returns {ok:false, reason:'not_found'} for a missing id", async () => {
+    const res = await restoreMemory({
+      pool, actor: "alice",
+      memoryId: "00000000-0000-0000-0000-000000000000",
+    });
+    expect(res).toEqual({ ok: false, reason: "not_found" });
+  });
+
+  it("regression: restored row reappears in searchMemories (soft-delete filter honors restore)", async () => {
+    const id = await seedMemory({
+      username: "alice", project_dir: "-w-p", body: QUERY_BODY, seed: 803,
+    });
+
+    // Forget → confirm absent from search
+    await forgetMemory({ pool, username: "alice", memoryId: id });
+    const afterForget = await searchMemories({
+      pool, embedderClient: stubEmbedder,
+      username: "alice", project_dir: "-w-p", query: QUERY, limit: 10,
+    });
+    expect(afterForget.map((h) => h.memory_id)).not.toContain(id);
+
+    // Restore → confirm visible again
+    await restoreMemory({ pool, actor: "alice", memoryId: id });
+    const afterRestore = await searchMemories({
+      pool, embedderClient: stubEmbedder,
+      username: "alice", project_dir: "-w-p", query: QUERY, limit: 10,
+    });
+    expect(afterRestore.map((h) => h.memory_id)).toContain(id);
   });
 });
