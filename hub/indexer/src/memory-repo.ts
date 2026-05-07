@@ -1,8 +1,33 @@
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { logger } from "./config.js";
 import { contentHash } from "./content-hash.js";
 import { insertMemoryRow } from "./distiller-repo.js";
 import { encodeProjectDir } from "./path-decode.js";
+
+export interface AuditEntry {
+  memory_id: string;
+  actor:     string;
+  action:    'write' | 'update' | 'forget' | 'restore';
+  before:    Record<string, unknown> | null;
+  after:     Record<string, unknown> | null;
+}
+
+export async function appendAudit(
+  client: PoolClient,
+  e: AuditEntry,
+): Promise<void> {
+  await client.query(
+    `INSERT INTO memory_audit_log (memory_id, actor, action, before, after)
+     VALUES ($1, $2, $3, $4::jsonb, $5::jsonb)`,
+    [
+      e.memory_id,
+      e.actor,
+      e.action,
+      e.before ? JSON.stringify(e.before) : null,
+      e.after  ? JSON.stringify(e.after)  : null,
+    ],
+  );
+}
 
 export interface SearchMemoriesArgs {
   pool:           Pool;
@@ -379,6 +404,15 @@ export async function writeUserMemory(
       facets:            args.facets ?? {},
       content_hash:      hash,
     });
+    if (memory_id !== null) {
+      await appendAudit(client, {
+        memory_id,
+        actor:  args.username,
+        action: 'write',
+        before: null,
+        after:  { type: args.type, name: args.name, description: args.description, body: args.body },
+      });
+    }
     await client.query("COMMIT");
     return { memory_id };
   } catch (e) {
@@ -406,16 +440,60 @@ export interface ForgetMemoryArgs {
 // Search and timeline already filter by `deleted_at IS NULL`, so the data is
 // invisible to readers; physical deletion is a separate retention concern.
 export async function forgetMemory(args: ForgetMemoryArgs): Promise<{ ok: boolean }> {
-  const r = await args.pool.query(
-    `UPDATE memories
-        SET deleted_at = now(),
-            updated_at = now()
-      WHERE memory_id = $1
-        AND username = $2
-        AND deleted_at IS NULL`,
-    [args.memoryId, args.username],
-  );
-  return { ok: (r.rowCount ?? 0) > 0 };
+  const client = await args.pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    // Lock the row and capture pre-state in one round-trip.
+    const sel = await client.query<{ memory_id: string; deleted_at: Date | null; name: string }>(
+      `SELECT memory_id, deleted_at, name
+         FROM memories
+        WHERE memory_id = $1
+          AND username  = $2
+        FOR UPDATE`,
+      [args.memoryId, args.username],
+    );
+
+    // Not found or wrong owner → rollback, no audit.
+    if (sel.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return { ok: false };
+    }
+
+    const row = sel.rows[0]!;
+
+    // Already deleted → idempotent false, no audit.
+    if (row.deleted_at !== null) {
+      await client.query("ROLLBACK");
+      return { ok: false };
+    }
+
+    await client.query(
+      `UPDATE memories
+          SET deleted_at = now(),
+              updated_at = now()
+        WHERE memory_id = $1
+          AND username  = $2
+          AND deleted_at IS NULL`,
+      [args.memoryId, args.username],
+    );
+
+    await appendAudit(client, {
+      memory_id: args.memoryId,
+      actor:     args.username,
+      action:    'forget',
+      before:    { deleted_at: null, name: row.name },
+      after:     null,
+    });
+
+    await client.query("COMMIT");
+    return { ok: true };
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 export interface GetContextArgs {
