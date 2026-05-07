@@ -301,13 +301,25 @@ describe("getMemory", () => {
     expect(got).toBeNull();
   });
 
-  it("returns null for soft-deleted rows", async () => {
+  it("returns soft-deleted rows with deleted_at populated (frontend needs to render Restore)", async () => {
     const id = await seedMemory({
       username: "alice", project_dir: "-w-p", body: "soon deleted", seed: 202,
     });
     await pool.query("UPDATE memories SET deleted_at = now() WHERE memory_id = $1", [id]);
     const got = await getMemory(pool, id);
-    expect(got).toBeNull();
+    expect(got).not.toBeNull();
+    expect(got!.deleted_at).toBeInstanceOf(Date);
+  });
+
+  it("returns scope_tier='project' for project-scoped rows and 'user' for user-scoped rows", async () => {
+    const projectId = await seedMemory({
+      username: "alice", project_dir: "-w-p", body: "project body", seed: 203,
+    });
+    const userId = await seedMemory({
+      username: "alice", project_dir: null, body: "user body", seed: 204,
+    });
+    expect((await getMemory(pool, projectId))!.scope_tier).toBe("project");
+    expect((await getMemory(pool, userId))!.scope_tier).toBe("user");
   });
 });
 
@@ -580,18 +592,20 @@ describe("writeUserMemory", () => {
 });
 
 describe("forgetMemory", () => {
-  it("soft-deletes own memory and getMemory subsequently returns null", async () => {
+  it("soft-deletes own memory; getMemory still returns the row with deleted_at populated", async () => {
     const id = await seedMemory({
       username: "alice", project_dir: "-w-p", body: "to be forgotten", seed: 500,
     });
     const before = await getMemory(pool, id);
     expect(before).not.toBeNull();
+    expect(before!.deleted_at).toBeNull();
 
     const res = await forgetMemory({ pool, username: "alice", memoryId: id });
     expect(res).toEqual({ ok: true });
 
     const after = await getMemory(pool, id);
-    expect(after).toBeNull();
+    expect(after).not.toBeNull();
+    expect(after!.deleted_at).toBeInstanceOf(Date);
 
     // Confirm deleted_at was set (and updated_at advanced) without nuking
     // chunks / facets / queue rows.

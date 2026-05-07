@@ -47,6 +47,17 @@ export interface SearchHit {
   snippet:     string;
   score:       number;
   scope_tier:  "org" | "user" | "project";
+  // List-row parity: the frontend memory panel renders search hits with the
+  // same component as list rows, so SearchHit must carry every field
+  // MemoryListItem expects. Without these, the panel sees `deleted_at`
+  // === undefined and rendered every search hit with the [deleted] badge.
+  type:        string;
+  source:      "user" | "distilled";
+  created_at:  string;
+  updated_at:  string;
+  hit_count:   number;
+  last_hit_at: string | null;
+  deleted_at:  string | null;
 }
 
 // Hybrid path (embedder available): vector + FTS blended ranking.
@@ -76,6 +87,8 @@ candidates AS (
 -- output. Pick the best chunk per memory (e.g. DISTINCT ON (memory_id) with
 -- score-ordered subquery) before returning. See sub-phase-b plan.
 SELECT m.memory_id, m.name, m.description,
+       m.type, m.source, m.created_at, m.updated_at,
+       m.hit_count, m.last_hit_at, m.deleted_at,
        LEFT(c.content, 200) AS snippet,
        (c.vec_sim * 0.7 + LEAST(c.fts_score, 1.0) * 0.3)
          * CASE
@@ -123,6 +136,8 @@ candidates AS (
 -- emit one row per matching chunk and produce duplicate memory_ids. See
 -- the matching note in HYBRID_SQL above.
 SELECT m.memory_id, m.name, m.description,
+       m.type, m.source, m.created_at, m.updated_at,
+       m.hit_count, m.last_hit_at, m.deleted_at,
        LEFT(c.content, 200) AS snippet,
        (LEAST(c.fts_score, 1.0) * 0.3)
          * CASE
@@ -175,6 +190,13 @@ export async function searchMemories(args: SearchMemoriesArgs): Promise<SearchHi
     snippet:     string;
     score:       string;
     scope_tier:  "org" | "user" | "project";
+    type:        string;
+    source:      "user" | "distilled";
+    created_at:  Date;
+    updated_at:  Date;
+    hit_count:   number;
+    last_hit_at: Date | null;
+    deleted_at:  Date | null;
   };
 
   const res = qVec === null
@@ -194,6 +216,13 @@ export async function searchMemories(args: SearchMemoriesArgs): Promise<SearchHi
     snippet:     r.snippet,
     score:       parseFloat(r.score),
     scope_tier:  r.scope_tier,
+    type:        r.type,
+    source:      r.source,
+    created_at:  r.created_at.toISOString(),
+    updated_at:  r.updated_at.toISOString(),
+    hit_count:   r.hit_count,
+    last_hit_at: r.last_hit_at ? r.last_hit_at.toISOString() : null,
+    deleted_at:  r.deleted_at  ? r.deleted_at.toISOString()  : null,
   }));
 
   if (hits.length > 0) {
@@ -215,6 +244,7 @@ export interface MemoryDetail {
   project_dir:        string | null;
   type:               string;
   source:             "distilled" | "user";
+  scope_tier:         "org" | "user" | "project";
   name:               string;
   description:        string;
   body:               string;
@@ -224,10 +254,17 @@ export interface MemoryDetail {
   last_hit_at:        Date | null;
   created_at:         Date;
   updated_at:         Date;
+  // Populated for soft-deleted rows so the frontend can render the [deleted]
+  // badge and pick Forget vs Restore. Agents looking up a row by id see the
+  // deleted state too — that's intentional: the targeted lookup path was
+  // never the soft-delete enforcement boundary (search/list/timeline are).
+  deleted_at:         Date | null;
 }
 
-// Fetch a single memory by id with its facets grouped by key. Soft-deleted
-// rows (deleted_at IS NOT NULL) are treated as absent and return null.
+// Fetch a single memory by id with its facets grouped by key. Returns
+// soft-deleted rows too (with deleted_at populated) so the frontend can
+// render Forget/Restore correctly — the soft-delete visibility boundary is
+// search/list/timeline, not targeted by-id lookup.
 //
 // One round-trip via a correlated subquery that builds the facets map in
 // Postgres (jsonb_object_agg over per-key jsonb_agg). Empty facet sets
@@ -242,6 +279,7 @@ export async function getMemory(
     project_dir:        string | null;
     type:               string;
     source:             "distilled" | "user";
+    scope_tier:         "org" | "user" | "project";
     name:               string;
     description:        string;
     body:               string;
@@ -250,12 +288,18 @@ export async function getMemory(
     last_hit_at:        Date | null;
     created_at:         Date;
     updated_at:         Date;
+    deleted_at:         Date | null;
     facets:             Record<string, string[]>;
   };
   const r = await pool.query<Row>(
     `SELECT m.memory_id, m.username, m.project_dir, m.type, m.source,
+            CASE
+              WHEN m.username = '__org__'    THEN 'org'
+              WHEN m.project_dir IS NULL     THEN 'user'
+              ELSE 'project'
+            END AS scope_tier,
             m.name, m.description, m.body, m.source_session_id,
-            m.hit_count, m.last_hit_at, m.created_at, m.updated_at,
+            m.hit_count, m.last_hit_at, m.created_at, m.updated_at, m.deleted_at,
             COALESCE(
               (SELECT jsonb_object_agg(key, vals) FROM (
                  SELECT key, jsonb_agg(value ORDER BY value COLLATE "C") AS vals
@@ -266,8 +310,7 @@ export async function getMemory(
               '{}'::jsonb
             ) AS facets
        FROM memories m
-      WHERE m.memory_id = $1
-        AND m.deleted_at IS NULL`,
+      WHERE m.memory_id = $1`,
     [memoryId],
   );
   if (r.rowCount === 0) return null;
@@ -278,6 +321,7 @@ export async function getMemory(
     project_dir:       row.project_dir,
     type:              row.type,
     source:            row.source,
+    scope_tier:        row.scope_tier,
     name:              row.name,
     description:       row.description,
     body:              row.body,
@@ -287,6 +331,7 @@ export async function getMemory(
     last_hit_at:       row.last_hit_at,
     created_at:        row.created_at,
     updated_at:        row.updated_at,
+    deleted_at:        row.deleted_at,
   };
 }
 
