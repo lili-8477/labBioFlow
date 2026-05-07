@@ -290,6 +290,70 @@ export async function getMemory(
   };
 }
 
+export async function getAuditTrail(args: {
+  pool:     Pool;
+  actor:    string;
+  memoryId: string;
+  limit?:   number;
+}): Promise<
+  | {
+      rows: Array<{
+        audit_id: number;
+        action:   string;
+        actor:    string;
+        before:   unknown;
+        after:    unknown;
+        created_at: string;
+      }>;
+    }
+  | { error: 'not_found' | 'forbidden' }
+> {
+  // Ownership check: lookup the memory (including soft-deleted rows)
+  const ownershipCheck = await args.pool.query<{ username: string }>(
+    `SELECT username FROM memories WHERE memory_id = $1`,
+    [args.memoryId],
+  );
+
+  if (ownershipCheck.rowCount === 0) {
+    return { error: 'not_found' };
+  }
+
+  const row = ownershipCheck.rows[0]!;
+  if (row.username !== args.actor) {
+    return { error: 'forbidden' };
+  }
+
+  // Fetch audit trail capped at limit (default/max 100)
+  const limit = Math.min(args.limit ?? 100, 100);
+  type AuditRow = {
+    audit_id:  number;
+    action:    string;
+    actor:     string;
+    before:    unknown;
+    after:     unknown;
+    created_at: Date;
+  };
+  const auditRes = await args.pool.query<AuditRow>(
+    `SELECT audit_id, action, actor, before, after, created_at
+       FROM memory_audit_log
+      WHERE memory_id = $1
+      ORDER BY created_at DESC
+      LIMIT $2`,
+    [args.memoryId, limit],
+  );
+
+  return {
+    rows: auditRes.rows.map((r) => ({
+      audit_id:  r.audit_id,
+      action:    r.action,
+      actor:     r.actor,
+      before:    r.before,
+      after:     r.after,
+      created_at: r.created_at.toISOString(),
+    })),
+  };
+}
+
 export interface TimelineEntry {
   memory_id:    string;
   name:         string;

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { runMigrations } from "../src/migrate.js";
 import { insertMemoryRow } from "../src/distiller-repo.js";
 import { contentHash } from "../src/content-hash.js";
-import { searchMemories, getMemory, timelineMemories, writeUserMemory, forgetMemory, getContext, updateMemory, restoreMemory, listMemories } from "../src/memory-repo.js";
+import { searchMemories, getMemory, timelineMemories, writeUserMemory, forgetMemory, getContext, updateMemory, restoreMemory, listMemories, getAuditTrail } from "../src/memory-repo.js";
 
 const MIGRATIONS_DIR = fileURLToPath(new URL("../migrations/", import.meta.url));
 let pg: StartedPostgreSqlContainer;
@@ -1028,6 +1028,109 @@ describe("restoreMemory", () => {
       username: "alice", project_dir: "-w-p", query: QUERY, limit: 10,
     });
     expect(afterRestore.map((h) => h.memory_id)).toContain(id);
+  });
+});
+
+describe("getAuditTrail", () => {
+  it("happy path: write → forget → restore returns 3 rows in DESC order (restore, forget, write)", async () => {
+    const { memory_id } = await writeUserMemory({
+      pool,
+      username:    "alice",
+      scope:       "user",
+      project_dir: null,
+      type:        "user",
+      name:        "audit-trail-test",
+      description: "testing audit trail",
+      body:        "original body",
+    });
+    expect(memory_id).not.toBeNull();
+
+    // Forget the memory
+    const forgetRes = await forgetMemory({ pool, username: "alice", memoryId: memory_id! });
+    expect(forgetRes.ok).toBe(true);
+
+    // Restore the memory
+    const restoreRes = await restoreMemory({ pool, actor: "alice", memoryId: memory_id! });
+    expect(restoreRes.ok).toBe(true);
+
+    // Fetch audit trail
+    const result = await getAuditTrail({
+      pool,
+      actor:    "alice",
+      memoryId: memory_id!,
+    });
+
+    expect("rows" in result).toBe(true);
+    const rows = (result as any).rows;
+    expect(rows).toHaveLength(3);
+
+    // Order must be DESC by created_at: restore, forget, write
+    expect(rows[0]!.action).toBe("restore");
+    expect(rows[1]!.action).toBe("forget");
+    expect(rows[2]!.action).toBe("write");
+
+    // Verify created_at is ISO string
+    for (const row of rows) {
+      expect(typeof row.created_at).toBe("string");
+      expect(() => new Date(row.created_at)).not.toThrow();
+    }
+  });
+
+  it("not_found: returns {error:'not_found'} for missing memory_id", async () => {
+    const result = await getAuditTrail({
+      pool,
+      actor:    "alice",
+      memoryId: "00000000-0000-0000-0000-000000000000",
+    });
+    expect(result).toEqual({ error: "not_found" });
+  });
+
+  it("forbidden: returns {error:'forbidden'} when actor is not the owner", async () => {
+    const { memory_id } = await writeUserMemory({
+      pool,
+      username:    "bob",
+      scope:       "user",
+      project_dir: null,
+      type:        "user",
+      name:        "bob's memory",
+      description: "desc",
+      body:        "body",
+    });
+    expect(memory_id).not.toBeNull();
+
+    const result = await getAuditTrail({
+      pool,
+      actor:    "alice",
+      memoryId: memory_id!,
+    });
+    expect(result).toEqual({ error: "forbidden" });
+  });
+
+  it("respects limit parameter (max 100)", async () => {
+    // Create a memory to get its ID
+    const { memory_id } = await writeUserMemory({
+      pool,
+      username:    "alice",
+      scope:       "user",
+      project_dir: null,
+      type:        "user",
+      name:        "limit-test",
+      description: "testing limit",
+      body:        "body",
+    });
+    expect(memory_id).not.toBeNull();
+
+    // Fetch with limit=1
+    const result = await getAuditTrail({
+      pool,
+      actor:    "alice",
+      memoryId: memory_id!,
+      limit:    1,
+    });
+
+    expect("rows" in result).toBe(true);
+    const rows = (result as any).rows;
+    expect(rows.length).toBeLessThanOrEqual(1);
   });
 });
 

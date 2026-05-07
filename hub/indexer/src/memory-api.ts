@@ -11,6 +11,7 @@ import type {
   updateMemory,
   restoreMemory,
   listMemories,
+  getAuditTrail,
 } from "./memory-repo.js";
 
 // DI seam: production wires real repo functions; tests pass vi.fn stubs. Pool
@@ -29,6 +30,7 @@ export interface MemoryApiDeps {
     updateMemory:     typeof updateMemory;
     restoreMemory:    typeof restoreMemory;
     listMemories:     typeof listMemories;
+    getAuditTrail:    typeof getAuditTrail;
   };
 }
 
@@ -101,6 +103,11 @@ const ListQuery = z.object({
   sort:            z.enum(['created', 'hit']).optional(),
   limit:           z.coerce.number().int().positive().max(200).optional(),
   cursor:          z.string().datetime().optional(),
+});
+
+const AuditQuery = z.object({
+  actor: z.string().min(1),
+  limit: z.coerce.number().int().positive().max(100).optional(),
 });
 
 export function buildApp(deps: MemoryApiDeps): FastifyInstance {
@@ -266,6 +273,28 @@ export function buildApp(deps: MemoryApiDeps): FastifyInstance {
     if (!r.ok && r.reason === 'forbidden')   { reply.code(403); return { error: 'not the owner' }; }
     if (!r.ok && r.reason === 'not_deleted') { reply.code(409); return { error: 'memory is not deleted' }; }
     return { ok: true };
+  });
+
+  // GET /memory/:id/audit — fetch audit trail for a memory. Owner-only.
+  // Registered before GET /memory/:id so literal "/audit" segment takes precedence.
+  app.get<{ Params: { id: string } }>("/memory/:id/audit", async (req, reply) => {
+    const parsed = AuditQuery.safeParse(req.query);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: 'validation failed', issues: parsed.error.issues };
+    }
+    const q = parsed.data;
+    const result = await deps.repo.getAuditTrail({
+      pool:     deps.pool,
+      actor:    q.actor,
+      memoryId: req.params.id,
+      limit:    q.limit,
+    });
+    if ('error' in result) {
+      if (result.error === 'not_found') { reply.code(404); return { error: 'memory not found' }; }
+      if (result.error === 'forbidden') { reply.code(403); return { error: 'not the owner' }; }
+    }
+    return result;
   });
 
   // GET /memory/:id — must be registered AFTER literal /memory/* routes

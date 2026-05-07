@@ -21,6 +21,7 @@ function makeDeps(): { deps: MemoryApiDeps; repo: {
   updateMemory:     ReturnType<typeof vi.fn>;
   restoreMemory:    ReturnType<typeof vi.fn>;
   listMemories:     ReturnType<typeof vi.fn>;
+  getAuditTrail:    ReturnType<typeof vi.fn>;
 } } {
   const repo = {
     searchMemories:   vi.fn(async (): Promise<SearchHit[]>     => []),
@@ -32,6 +33,7 @@ function makeDeps(): { deps: MemoryApiDeps; repo: {
     updateMemory:     vi.fn(async (): Promise<{ ok: boolean; reason?: 'not_found' | 'forbidden' | 'distilled' }> => ({ ok: true })),
     restoreMemory:    vi.fn(async (): Promise<{ ok: boolean; reason?: 'not_found' | 'forbidden' | 'not_deleted' }> => ({ ok: true })),
     listMemories:     vi.fn(async (): Promise<{ items: ListItem[]; next_cursor: string | null }> => ({ items: [], next_cursor: null })),
+    getAuditTrail:    vi.fn(async (): Promise<{ rows: never[] } | { error: 'not_found' | 'forbidden' }> => ({ rows: [] })),
   };
   const deps: MemoryApiDeps = {
     pool: {} as Pool,
@@ -522,6 +524,65 @@ describe("memory-api", () => {
       expect(res.statusCode).toBe(400);
       expect(res.json()).toMatchObject({ error: "validation failed", issues: expect.any(Array) });
       expect(depsBag.repo.listMemories).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─────────────────────────── GET /memory/:id/audit ───────────────────────────────
+
+  describe("GET /memory/:id/audit", () => {
+    it("happy path: returns audit rows when owner requests", async () => {
+      depsBag.repo.getAuditTrail.mockResolvedValueOnce({
+        rows: [
+          { audit_id: 1, action: "write", actor: "alice", before: null, after: { name: "mem" }, created_at: "2026-01-01T00:00:00.000Z" },
+        ],
+      });
+
+      const res = await app.inject({
+        method: "GET",
+        url:    "/memory/abc-123/audit?actor=alice&limit=50",
+      });
+      expect(res.statusCode).toBe(200);
+      const json = res.json();
+      expect(json.rows).toHaveLength(1);
+      expect(json.rows[0].audit_id).toBe(1);
+      expect(json.rows[0].action).toBe("write");
+
+      expect(depsBag.repo.getAuditTrail).toHaveBeenCalledTimes(1);
+      const arg = depsBag.repo.getAuditTrail.mock.calls[0]![0];
+      expect(arg.actor).toBe("alice");
+      expect(arg.memoryId).toBe("abc-123");
+      expect(arg.limit).toBe(50);
+      expect(arg.pool).toBe(depsBag.deps.pool);
+    });
+
+    it("404 when repo returns not_found", async () => {
+      depsBag.repo.getAuditTrail.mockResolvedValueOnce({ error: "not_found" });
+      const res = await app.inject({
+        method: "GET",
+        url:    "/memory/missing-id/audit?actor=alice",
+      });
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toMatchObject({ error: "memory not found" });
+    });
+
+    it("403 when repo returns forbidden", async () => {
+      depsBag.repo.getAuditTrail.mockResolvedValueOnce({ error: "forbidden" });
+      const res = await app.inject({
+        method: "GET",
+        url:    "/memory/other-users-id/audit?actor=alice",
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json()).toMatchObject({ error: "not the owner" });
+    });
+
+    it("400 when actor is missing", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url:    "/memory/abc-123/audit",
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({ error: "validation failed", issues: expect.any(Array) });
+      expect(depsBag.repo.getAuditTrail).not.toHaveBeenCalled();
     });
   });
 });
