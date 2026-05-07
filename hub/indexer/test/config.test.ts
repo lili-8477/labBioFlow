@@ -40,4 +40,25 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ PG_URL: "x", MAX_CONCURRENT_FILES: "abc" }))
       .toThrow(/MAX_CONCURRENT_FILES/);
   });
+
+  it("memoryOrgManager defaults to null when MEMORY_ORG_MANAGER is unset", () => {
+    const cfg = loadConfig({ PG_URL: "postgres://x" });
+    expect(cfg.memoryOrgManager).toBeNull();
+  });
+
+  it("memoryOrgManager reads MEMORY_ORG_MANAGER as-is", () => {
+    const cfg = loadConfig({
+      PG_URL: "postgres://x",
+      MEMORY_ORG_MANAGER: "li86",
+    });
+    expect(cfg.memoryOrgManager).toBe("li86");
+  });
+
+  it("memoryOrgManager treats empty string as null", () => {
+    const cfg = loadConfig({
+      PG_URL: "postgres://x",
+      MEMORY_ORG_MANAGER: "",
+    });
+    expect(cfg.memoryOrgManager).toBeNull();
+  });
 });

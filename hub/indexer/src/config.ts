@@ -14,6 +14,7 @@ export interface Config {
   embedderBatchSize:    number;
   embedderIntervalMs:   number;
   memoryApiPort:        number;
+  memoryOrgManager:     string | null;
 }
 
 function parseIntVar(env: Record<string, string | undefined>, name: string, fallback: number): number {
@@ -40,6 +41,9 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   const pgUrl = env.PG_URL;
   if (!pgUrl) throw new Error("PG_URL is required");
   const logLevel = (env.LOG_LEVEL ?? "info") as Config["logLevel"];
+  const memoryOrgManager = env.MEMORY_ORG_MANAGER && env.MEMORY_ORG_MANAGER.length > 0
+    ? env.MEMORY_ORG_MANAGER
+    : null;
   return {
     pgUrl,
     workspacesRoot: env.WORKSPACES_ROOT ?? "/workspaces",
@@ -52,5 +56,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     embedderBatchSize:    parseIntVar(env, "EMBEDDER_BATCH_SIZE",      64),
     embedderIntervalMs:   parseIntVar(env, "EMBEDDER_INTERVAL_MS",   5000),
     memoryApiPort:        parseIntVar(env, "MEMORY_API_PORT",         8400),
+    memoryOrgManager,
   };
 }
