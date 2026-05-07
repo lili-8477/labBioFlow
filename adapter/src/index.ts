@@ -19,6 +19,7 @@ import { createHash } from "node:crypto";
 import { Pool } from "pg";
 import { ChatsRepo } from "./chats-repo.js";
 import { loadDbConfig } from "./db-config.js";
+import { MemoryRpcClient } from "./memory-rpc.js";
 import { NatsBus } from "./nats-bus.js";
 import { RpcRouter } from "./rpc.js";
 import { importSidecar } from "./sidecar-import.js";
@@ -61,6 +62,14 @@ async function main(): Promise<void> {
 
   const chatsRepo = new ChatsRepo(pool, dbCfg.username);
 
+  const memoryApiUrl = process.env.MEMORY_API_URL;
+  const memoryClient = memoryApiUrl
+    ? new MemoryRpcClient(memoryApiUrl, dbCfg.username)
+    : null;
+  if (!memoryClient) {
+    console.warn("[adapter] MEMORY_API_URL not set — memory_* RPCs will be unavailable");
+  }
+
   await bus.connect();
   console.log(`[adapter] connected to NATS ${servers}, service_id=${serviceId.slice(0, 12)}...`);
 
@@ -79,6 +88,7 @@ async function main(): Promise<void> {
       process.env.KERNEL_CULL_CHECK_INTERVAL_MS,
       60_000,
     ),
+    memory: memoryClient,
   });
 
   await bus.serve((method, params) => router.dispatch(method, params));
