@@ -482,6 +482,26 @@ describe("decideShareRequest", () => {
     });
     expect(second).toMatchObject({ ok: false, reason: "already_decided" });
   });
+
+  it("approve on kind=skill returns promotion_failed (defensive — submit blocks this, but the guard must hold)", async () => {
+    // Bypass submitShareRequest's not_implemented check by inserting a skill-kind row directly.
+    // This guards against a future submit refactor accidentally letting skill rows through.
+    const shareId = await seedRequest({ requester: ALICE, kind: "skill", ref: "single-cell-qc" });
+    const result = await decideShareRequest({
+      pool, actor: MANAGER, manager: MANAGER, shareId, decision: "approve",
+    });
+    expect(result).toMatchObject({ ok: false, reason: "promotion_failed" });
+    if (result.ok) throw new Error("unreachable");
+    expect(result.detail).toMatch(/skill.*not implemented/);
+
+    // Status must remain pending — the failed approve rolled back, leaving the request
+    // open for the manager to either reject it or retry once skill kind ships.
+    const sr = await pool.query<{ status: string }>(
+      `SELECT status FROM share_requests WHERE share_id = $1`,
+      [shareId],
+    );
+    expect(sr.rows[0]!.status).toBe("pending");
+  });
 });
 
 // ─── withdrawShareRequest ─────────────────────────────────────────────────────
