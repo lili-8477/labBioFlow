@@ -536,6 +536,32 @@ describe("memory-api", () => {
       expect(res.json()).toMatchObject({ error: "validation failed", issues: expect.any(Array) });
       expect(depsBag.repo.listMemories).not.toHaveBeenCalled();
     });
+
+    it.each([
+      ["true",   true],
+      ["false",  false],
+      [undefined, false],  // missing key → transform returns false, the spec default
+    ] as const)(
+      "include_deleted=%s parses to %s (z.coerce.boolean would coerce non-empty strings to true)",
+      async (raw, expected) => {
+        const url = raw === undefined
+          ? "/memory/list?username=alice"
+          : `/memory/list?username=alice&include_deleted=${raw}`;
+        const res = await app.inject({ method: "GET", url });
+        expect(res.statusCode).toBe(200);
+        const arg = depsBag.repo.listMemories.mock.calls[0]![0];
+        expect(arg.include_deleted).toBe(expected);
+      },
+    );
+
+    it("400 when include_deleted is something other than 'true'/'false'", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url:    "/memory/list?username=alice&include_deleted=yes",
+      });
+      expect(res.statusCode).toBe(400);
+      expect(depsBag.repo.listMemories).not.toHaveBeenCalled();
+    });
   });
 
   // ─────────────────────────── GET /memory/:id/audit ───────────────────────────────

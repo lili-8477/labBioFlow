@@ -101,7 +101,11 @@ const ListQuery = z.object({
     typeof v === 'string' ? [v] : v
   ).optional(),
   source:          z.enum(['user', 'distilled']).optional(),
-  include_deleted: z.coerce.boolean().optional(),
+  // Querystring booleans need explicit literal parsing — `z.coerce.boolean`
+  // calls JS `Boolean(x)` which returns `true` for any non-empty string,
+  // so `?include_deleted=false` would incorrectly include deleted rows.
+  include_deleted: z.union([z.literal('true'), z.literal('false')]).optional()
+                    .transform(v => v === 'true'),
   sort:            z.enum(['created', 'hit']).optional(),
   limit:           z.coerce.number().int().positive().max(200).optional(),
   cursor:          z.string().datetime().optional(),
