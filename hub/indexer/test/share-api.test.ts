@@ -279,6 +279,13 @@ describe('share-api plugin', () => {
       expect(res.json()).toMatchObject({ error: 'already approved' });
     });
 
+    it('422 when repo returns collision', async () => {
+      depsBag.repo.decideShareRequest.mockResolvedValueOnce({ ok: false, reason: 'collision', detail: 'shared/skills/demo already exists' });
+      const res = await app.inject({ method: 'POST', url: '/share/sr-abc-123/decide', payload: validBody });
+      expect(res.statusCode).toBe(422);
+      expect(res.json()).toMatchObject({ error: 'name collision' });
+    });
+
     it('422 when repo returns promotion_failed with detail', async () => {
       depsBag.repo.decideShareRequest.mockResolvedValueOnce({ ok: false, reason: 'promotion_failed', detail: 'snapshot malformed' });
       const res = await app.inject({ method: 'POST', url: '/share/sr-abc-123/decide', payload: validBody });

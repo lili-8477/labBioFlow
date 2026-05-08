@@ -355,6 +355,7 @@ describe("decideShareRequest", () => {
 
     const result = await decideShareRequest({
       pool, actor: MANAGER, manager: MANAGER, shareId: sub.share_id, decision: "approve",
+      workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused",
     });
 
     expect(result).toMatchObject({ ok: true, status: "approved" });
@@ -432,6 +433,7 @@ describe("decideShareRequest", () => {
 
     const result = await decideShareRequest({
       pool, actor: MANAGER, manager: MANAGER, shareId, decision: "approve",
+      workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused",
     });
 
     expect(result).toMatchObject({ ok: true, status: "approved" });
@@ -460,6 +462,7 @@ describe("decideShareRequest", () => {
     const result = await decideShareRequest({
       pool, actor: MANAGER, manager: MANAGER, shareId: sub.share_id,
       decision: "reject", comment: "not relevant",
+      workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused",
     });
 
     expect(result).toMatchObject({ ok: true, status: "rejected" });
@@ -481,6 +484,7 @@ describe("decideShareRequest", () => {
     const shareId = await seedRequest({ requester: ALICE, reviewer: MANAGER });
     const result = await decideShareRequest({
       pool, actor: ALICE, manager: MANAGER, shareId, decision: "approve",
+      workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused",
     });
     expect(result).toEqual({ ok: false, reason: "forbidden" });
   });
@@ -489,6 +493,7 @@ describe("decideShareRequest", () => {
     const shareId = await seedRequest({ requester: ALICE, reviewer: MANAGER });
     const result = await decideShareRequest({
       pool, actor: MANAGER, manager: null, shareId, decision: "approve",
+      workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused",
     });
     expect(result).toEqual({ ok: false, reason: "forbidden" });
   });
@@ -501,25 +506,29 @@ describe("decideShareRequest", () => {
 
     const first = await decideShareRequest({
       pool, actor: MANAGER, manager: MANAGER, shareId: sub.share_id, decision: "reject",
+      workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused",
     });
     expect(first.ok).toBe(true);
 
     const second = await decideShareRequest({
       pool, actor: MANAGER, manager: MANAGER, shareId: sub.share_id, decision: "approve",
+      workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused",
     });
     expect(second).toMatchObject({ ok: false, reason: "already_decided" });
   });
 
-  it("approve on kind=skill returns promotion_failed (defensive — submit blocks this, but the guard must hold)", async () => {
-    // Bypass submitShareRequest's not_implemented check by inserting a skill-kind row directly.
-    // This guards against a future submit refactor accidentally letting skill rows through.
+  it("approve on kind=skill with malformed snapshot_meta returns promotion_failed", async () => {
+    // Bypass submitShareRequest by inserting a skill-kind row whose snapshot_meta
+    // lacks the root_name/manifest/files fields that approveSkillShareRequest requires.
+    // Guards the shape-validation path in approveSkillShareRequest.
     const shareId = await seedRequest({ requester: ALICE, kind: "skill", ref: "single-cell-qc" });
     const result = await decideShareRequest({
       pool, actor: MANAGER, manager: MANAGER, shareId, decision: "approve",
+      workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused",
     });
     expect(result).toMatchObject({ ok: false, reason: "promotion_failed" });
     if (result.ok) throw new Error("unreachable");
-    expect(result.detail).toMatch(/skill.*not implemented/);
+    expect(result.detail).toMatch(/snapshot_meta/);
 
     // Status must remain pending — the failed approve rolled back, leaving the request
     // open for the manager to either reject it or retry once skill kind ships.
@@ -543,6 +552,7 @@ describe("decideShareRequest", () => {
     );
     const result = await decideShareRequest({
       pool, actor: MANAGER, manager: MANAGER, shareId, decision: "approve",
+      workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused",
     });
     expect(result).toMatchObject({ ok: false, reason: "promotion_failed" });
     if (result.ok) throw new Error("unreachable");
@@ -687,5 +697,94 @@ describe("submitShareRequest skill branch", () => {
     });
     expect(r.ok).toBe(false);
     expect((r as any).reason).toBe("missing_manifest");
+  });
+});
+
+// ─── decideShareRequest skill approve branch ──────────────────────────────────
+
+describe("decideShareRequest skill approve branch", () => {
+  let workspacesRoot: string;
+  let shareSnapshotsDir: string;
+
+  beforeEach(async () => {
+    workspacesRoot    = await mkdtemp(path.join(tmpdir(), "ws-"));
+    shareSnapshotsDir = await mkdtemp(path.join(tmpdir(), "snap-"));
+    // Pre-create shared/skills/ — destination of the untar.
+    await mkdir(path.join(workspacesRoot, "shared", "skills"), { recursive: true });
+    // Seed alice's source skill.
+    const skill = path.join(workspacesRoot, "alice", ".claude", "skills", "demo");
+    await mkdir(skill, { recursive: true });
+    await writeFile(path.join(skill, "SKILL.md"), "# demo");
+    await writeFile(path.join(skill, "run.sh"), "#!/bin/bash\necho hi\n");
+  });
+
+  it("approves a pending skill request and untars to shared/skills/", async () => {
+    const submitR = await submitShareRequest({
+      pool, manager: "li86", requester: "alice",
+      kind: "skill", ref: "demo",
+      workspacesRoot, shareSnapshotsDir,
+    });
+    expect(submitR.ok).toBe(true);
+    if (!submitR.ok) throw new Error("type guard");
+
+    const decideR = await decideShareRequest({
+      pool, actor: "li86", manager: "li86",
+      shareId: submitR.share_id, decision: "approve", comment: "looks good",
+      workspacesRoot, shareSnapshotsDir,
+    });
+    expect(decideR.ok).toBe(true);
+    if (!decideR.ok) throw new Error("type guard");
+    expect(decideR.status).toBe("approved");
+    expect(decideR.promotion_result?.dest_path).toBe(path.join(workspacesRoot, "shared", "skills", "demo"));
+
+    // Files must be present on disk.
+    const { readFile } = await import("node:fs/promises");
+    const manifest = await readFile(
+      path.join(workspacesRoot, "shared", "skills", "demo", "SKILL.md"), "utf8");
+    expect(manifest).toMatch(/demo/);
+  });
+
+  it("rejects approve when shared/skills/<name> already exists (collision)", async () => {
+    // Pre-create the collision target.
+    await mkdir(path.join(workspacesRoot, "shared", "skills", "demo"), { recursive: true });
+
+    const submitR = await submitShareRequest({
+      pool, manager: "li86", requester: "alice",
+      kind: "skill", ref: "demo",
+      workspacesRoot, shareSnapshotsDir,
+    });
+    if (!submitR.ok) throw new Error("setup failed");
+
+    const decideR = await decideShareRequest({
+      pool, actor: "li86", manager: "li86",
+      shareId: submitR.share_id, decision: "approve",
+      workspacesRoot, shareSnapshotsDir,
+    });
+    expect(decideR.ok).toBe(false);
+    expect((decideR as any).reason).toBe("collision");
+
+    // Status must remain pending so the manager can reject-with-comment.
+    const row = (await pool.query(
+      `SELECT status FROM share_requests WHERE share_id=$1`, [submitR.share_id])).rows[0];
+    expect(row.status).toBe("pending");
+  });
+
+  it("snapshot survives source deletion (manager reviews frozen content)", async () => {
+    const submitR = await submitShareRequest({
+      pool, manager: "li86", requester: "alice",
+      kind: "skill", ref: "demo",
+      workspacesRoot, shareSnapshotsDir,
+    });
+    if (!submitR.ok) throw new Error("setup failed");
+    // Delete the source.
+    const { rm } = await import("node:fs/promises");
+    await rm(path.join(workspacesRoot, "alice", ".claude", "skills", "demo"), { recursive: true });
+
+    const decideR = await decideShareRequest({
+      pool, actor: "li86", manager: "li86",
+      shareId: submitR.share_id, decision: "approve",
+      workspacesRoot, shareSnapshotsDir,
+    });
+    expect(decideR.ok).toBe(true);
   });
 });

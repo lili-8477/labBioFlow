@@ -147,12 +147,14 @@ export function shareRoutesPlugin(deps: ShareApiDeps) {
       }
       const b = parsed.data;
       const result = await deps.repo.decideShareRequest({
-        pool:     deps.pool,
-        actor:    b.actor,
-        manager:  deps.manager,
-        shareId:  req.params.id,
-        decision: b.decision,
-        comment:  b.comment,
+        pool:              deps.pool,
+        actor:             b.actor,
+        manager:           deps.manager,
+        shareId:           req.params.id,
+        decision:          b.decision,
+        comment:           b.comment,
+        workspacesRoot:    deps.workspacesRoot,
+        shareSnapshotsDir: deps.shareSnapshotsDir,
       });
       if (result.ok) {
         return { ok: true, status: result.status, ...(result.promotion_result !== undefined ? { promotion_result: result.promotion_result } : {}) };
@@ -168,6 +170,10 @@ export function shareRoutesPlugin(deps: ShareApiDeps) {
       if (result.reason === 'already_decided') {
         reply.code(409);
         return { error: `already ${result.detail}` };
+      }
+      if (result.reason === 'collision') {
+        reply.code(422);
+        return { error: 'name collision', detail: result.detail };
       }
       // promotion_failed
       reply.code(422);
