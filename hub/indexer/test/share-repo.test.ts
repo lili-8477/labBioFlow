@@ -3,6 +3,9 @@ import { PostgreSqlContainer, StartedPostgreSqlContainer } from "@testcontainers
 import { Pool } from "pg";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import * as path from "node:path";
 import { runMigrations } from "../src/migrate.js";
 import { insertMemoryRow } from "../src/distiller-repo.js";
 import { contentHash } from "../src/content-hash.js";
@@ -136,6 +139,8 @@ describe("submitShareRequest", () => {
       kind:      "memory",
       ref,
       note:      "please share",
+      workspacesRoot:    "/tmp/unused",
+      shareSnapshotsDir: "/tmp/unused",
     });
 
     expect(result).toMatchObject({ ok: true });
@@ -162,31 +167,25 @@ describe("submitShareRequest", () => {
 
   it("returns no_manager when manager is null", async () => {
     const ref = await seedMemory({ username: ALICE });
-    const result = await submitShareRequest({ pool, manager: null, requester: ALICE, kind: "memory", ref });
+    const result = await submitShareRequest({ pool, manager: null, requester: ALICE, kind: "memory", ref, workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused" });
     expect(result).toEqual({ ok: false, reason: "no_manager" });
-  });
-
-  it("returns not_implemented for kind=skill", async () => {
-    const ref = await seedMemory({ username: ALICE });
-    const result = await submitShareRequest({ pool, manager: MANAGER, requester: ALICE, kind: "skill", ref });
-    expect(result).toEqual({ ok: false, reason: "not_implemented" });
   });
 
   it("returns not_implemented for kind=folder", async () => {
     const ref = await seedMemory({ username: ALICE });
-    const result = await submitShareRequest({ pool, manager: MANAGER, requester: ALICE, kind: "folder", ref });
+    const result = await submitShareRequest({ pool, manager: MANAGER, requester: ALICE, kind: "folder", ref, workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused" });
     expect(result).toEqual({ ok: false, reason: "not_implemented" });
   });
 
   it("returns forbidden when source memory_id is owned by a different user", async () => {
     const ref = await seedMemory({ username: BOB });
-    const result = await submitShareRequest({ pool, manager: MANAGER, requester: ALICE, kind: "memory", ref });
+    const result = await submitShareRequest({ pool, manager: MANAGER, requester: ALICE, kind: "memory", ref, workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused" });
     expect(result).toEqual({ ok: false, reason: "forbidden" });
   });
 
   it("returns forbidden when source memory is soft-deleted", async () => {
     const ref = await seedMemory({ username: ALICE, deleted: true });
-    const result = await submitShareRequest({ pool, manager: MANAGER, requester: ALICE, kind: "memory", ref });
+    const result = await submitShareRequest({ pool, manager: MANAGER, requester: ALICE, kind: "memory", ref, workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused" });
     expect(result).toEqual({ ok: false, reason: "forbidden" });
   });
 });
@@ -350,7 +349,7 @@ describe("decideShareRequest", () => {
     const ref = await seedMemory({ username: ALICE, body: "shared content" });
 
     // Submit so snapshot is frozen
-    const sub = await submitShareRequest({ pool, manager: MANAGER, requester: ALICE, kind: "memory", ref });
+    const sub = await submitShareRequest({ pool, manager: MANAGER, requester: ALICE, kind: "memory", ref, workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused" });
     expect(sub.ok).toBe(true);
     if (!sub.ok) throw new Error("unreachable");
 
@@ -450,7 +449,7 @@ describe("decideShareRequest", () => {
 
   it("reject memory: status→rejected, review_comment stored, no DB row created in memories", async () => {
     const ref = await seedMemory({ username: ALICE });
-    const sub = await submitShareRequest({ pool, manager: MANAGER, requester: ALICE, kind: "memory", ref });
+    const sub = await submitShareRequest({ pool, manager: MANAGER, requester: ALICE, kind: "memory", ref, workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused" });
     expect(sub.ok).toBe(true);
     if (!sub.ok) throw new Error("unreachable");
 
@@ -496,7 +495,7 @@ describe("decideShareRequest", () => {
 
   it("returns already_decided when called twice on the same share_id", async () => {
     const ref = await seedMemory({ username: ALICE });
-    const sub = await submitShareRequest({ pool, manager: MANAGER, requester: ALICE, kind: "memory", ref });
+    const sub = await submitShareRequest({ pool, manager: MANAGER, requester: ALICE, kind: "memory", ref, workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused" });
     expect(sub.ok).toBe(true);
     if (!sub.ok) throw new Error("unreachable");
 
@@ -614,5 +613,79 @@ describe("getShareCapabilities", () => {
     expect(caps.is_manager).toBe(false);
     expect(caps.pending_inbox_count).toBe(0);
     expect(caps.manager_username).toBeNull();
+  });
+});
+
+// ─── submitShareRequest skill branch ─────────────────────────────────────────
+
+describe("submitShareRequest skill branch", () => {
+  let workspacesRoot: string;
+  let shareSnapshotsDir: string;
+
+  beforeEach(async () => {
+    workspacesRoot    = await mkdtemp(path.join(tmpdir(), "ws-"));
+    shareSnapshotsDir = await mkdtemp(path.join(tmpdir(), "snap-"));
+    // Pre-seed alice's skills/single-cell/SKILL.md
+    const skill = path.join(workspacesRoot, "alice", ".claude", "skills", "single-cell");
+    await mkdir(skill, { recursive: true });
+    await writeFile(path.join(skill, "SKILL.md"), "# single-cell\nbody\n");
+    await writeFile(path.join(skill, "qc.py"), "print(1)\n");
+  });
+
+  it("happy path: packs a tarball and writes a pending row", async () => {
+    const r = await submitShareRequest({
+      pool, manager: "li86", requester: "alice",
+      kind: "skill", ref: "single-cell",
+      workspacesRoot, shareSnapshotsDir,
+    });
+    expect(r).toMatchObject({ ok: true });
+    if (!r.ok) throw new Error("type guard");
+
+    const row = (await pool.query(
+      `SELECT artifact_kind, snapshot_meta, status FROM share_requests WHERE share_id=$1`,
+      [r.share_id])).rows[0];
+    expect(row.artifact_kind).toBe("skill");
+    expect(row.status).toBe("pending");
+    const meta = row.snapshot_meta as { root_name: string; manifest: string; files: { path: string }[] };
+    expect(meta.root_name).toBe("single-cell");
+    expect(meta.manifest).toMatch(/single-cell/);
+    expect(meta.files.map((f) => f.path).sort()).toEqual(["SKILL.md", "qc.py"]);
+
+    // The tarball must exist on disk.
+    const tarPath = path.join(shareSnapshotsDir, `${r.share_id}.tar.gz`);
+    const { stat } = await import("node:fs/promises");
+    expect((await stat(tarPath)).isFile()).toBe(true);
+  });
+
+  it("rejects ../ path traversal with invalid_ref", async () => {
+    const r = await submitShareRequest({
+      pool, manager: "li86", requester: "alice",
+      kind: "skill", ref: "../../etc",
+      workspacesRoot, shareSnapshotsDir,
+    });
+    expect(r).toEqual({ ok: false, reason: "invalid_ref" });
+  });
+
+  it("returns source_not_found when the skill folder does not exist", async () => {
+    const r = await submitShareRequest({
+      pool, manager: "li86", requester: "alice",
+      kind: "skill", ref: "no-such-skill",
+      workspacesRoot, shareSnapshotsDir,
+    });
+    expect(r.ok).toBe(false);
+    expect((r as any).reason).toBe("source_not_found");
+  });
+
+  it("returns missing_manifest when SKILL.md is absent", async () => {
+    const skill = path.join(workspacesRoot, "alice", ".claude", "skills", "no-manifest");
+    await mkdir(skill, { recursive: true });
+    await writeFile(path.join(skill, "qc.py"), "x");
+    const r = await submitShareRequest({
+      pool, manager: "li86", requester: "alice",
+      kind: "skill", ref: "no-manifest",
+      workspacesRoot, shareSnapshotsDir,
+    });
+    expect(r.ok).toBe(false);
+    expect((r as any).reason).toBe("missing_manifest");
   });
 });

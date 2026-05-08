@@ -1,8 +1,16 @@
 import { randomUUID } from "node:crypto";
+import * as path from "node:path";
+import { stat } from "node:fs/promises";
 import type { Pool, PoolClient } from "pg";
 import { insertMemoryRow } from "./distiller-repo.js";
 import { contentHash } from "./content-hash.js";
 import { appendAudit } from "./memory-repo.js";
+import {
+  safeJoin,
+  walkSkillFiles,
+  readSkillManifest,
+  packSkillTarball,
+} from "./share-fs.js";
 
 export type ArtifactKind = "memory" | "skill" | "folder";
 export type ShareStatus = "pending" | "approved" | "rejected" | "withdrawn";
@@ -59,21 +67,35 @@ function mapRow(r: ShareRow): ShareRequest {
 // ─── 1. submitShareRequest ──────────────────────────────────────────────────
 
 export interface SubmitArgs {
-  pool:      Pool;
-  manager:   string | null;
-  requester: string;
-  kind:      ArtifactKind;
-  ref:       string;
-  note?:     string;
+  pool:               Pool;
+  manager:            string | null;
+  requester:          string;
+  kind:               ArtifactKind;
+  ref:                string;
+  note?:              string;
+  // Phase 2: required for the skill branch. Memory branch ignores them.
+  workspacesRoot:     string;        // e.g. "/workspaces"
+  shareSnapshotsDir:  string;        // e.g. "/workspaces/shared/.share-snapshots"
 }
 
 export type SubmitResult =
   | { ok: true; share_id: string }
-  | { ok: false; reason: "no_manager" | "not_implemented" | "forbidden" };
+  | { ok: false; reason:
+        | "no_manager"
+        | "not_implemented"
+        | "forbidden"
+        | "invalid_ref"
+        | "source_not_found"
+        | "missing_manifest"
+        | "snapshot_failed";
+      detail?: string };
 
 export async function submitShareRequest(args: SubmitArgs): Promise<SubmitResult> {
   if (args.manager === null) {
     return { ok: false, reason: "no_manager" };
+  }
+  if (args.kind === "skill") {
+    return await submitSkillShareRequest(args);
   }
   if (args.kind !== "memory") {
     return { ok: false, reason: "not_implemented" };
@@ -139,6 +161,58 @@ export async function submitShareRequest(args: SubmitArgs): Promise<SubmitResult
       args.manager,
       args.note ?? null,
     ],
+  );
+  return { ok: true, share_id };
+}
+
+async function submitSkillShareRequest(args: SubmitArgs): Promise<SubmitResult> {
+  // Resolve <workspaces>/<requester>/.claude/skills/<ref>; reject traversal.
+  const userSkillsRoot = path.join(args.workspacesRoot, args.requester, ".claude", "skills");
+  const resolved = safeJoin(userSkillsRoot, args.ref);
+  if (resolved === null) {
+    return { ok: false, reason: "invalid_ref" };
+  }
+
+  let st;
+  try {
+    st = await stat(resolved);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") {
+      return { ok: false, reason: "source_not_found" };
+    }
+    throw e;
+  }
+  if (!st.isDirectory()) {
+    return { ok: false, reason: "source_not_found", detail: "ref is not a directory" };
+  }
+
+  const manifest = await readSkillManifest(resolved);
+  if (manifest === null) {
+    return { ok: false, reason: "missing_manifest", detail: "no SKILL.md at top level" };
+  }
+
+  const files = await walkSkillFiles(resolved);
+
+  const share_id = randomUUID();
+  const tarPath = path.join(args.shareSnapshotsDir, `${share_id}.tar.gz`);
+  try {
+    await packSkillTarball({ skillDir: resolved, destTar: tarPath });
+  } catch (e) {
+    return { ok: false, reason: "snapshot_failed", detail: (e as Error).message };
+  }
+
+  const snapshot_meta: Record<string, unknown> = {
+    root_name: path.basename(resolved),
+    manifest,
+    files,
+  };
+
+  await args.pool.query(
+    `INSERT INTO share_requests
+       (share_id, artifact_kind, artifact_ref, snapshot_meta,
+        requester, reviewer, requester_note)
+     VALUES ($1, 'skill', $2, $3, $4, $5, $6)`,
+    [share_id, args.ref, snapshot_meta, args.requester, args.manager, args.note ?? null],
   );
   return { ok: true, share_id };
 }
