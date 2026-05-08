@@ -21,6 +21,9 @@ export interface UploadServerOptions {
   port: number;
   /** Subtree relative to workspaceRoot under which writes are allowed. */
   allowedSubtree?: string;       // default "local_projects"
+  // Phase 2: needed for /share-snapshot/<id>/file proxy.
+  username?:       string;       // omitted → /share-snapshot/ returns 503
+  memoryApiUrl?:   string;       // omitted → /share-snapshot/ returns 503
 }
 
 const DENY_NAMES = new Set([".env", ".claude", "CLAUDE.md", ".bioflow"]);
@@ -29,10 +32,12 @@ export function startUploadServer(opts: UploadServerOptions): Server {
   const { workspaceRoot, port } = opts;
   const allowed = opts.allowedSubtree ?? "local_projects";
   const allowedPrefix = resolve(workspaceRoot, allowed) + "/";
+  const username     = opts.username ?? null;
+  const memoryApiUrl = opts.memoryApiUrl ?? null;
 
   const server = createServer(async (req, res) => {
     try {
-      await handle(req, res, { workspaceRoot, allowedPrefix });
+      await handle(req, res, { workspaceRoot, allowedPrefix, username, memoryApiUrl });
     } catch (err) {
       console.error("[upload] handler crashed:", err);
       if (!res.headersSent) sendJson(res, 500, { error: "internal" });
@@ -54,13 +59,18 @@ export function startUploadServer(opts: UploadServerOptions): Server {
 async function handle(
   req: IncomingMessage,
   res: ServerResponse,
-  ctx: { workspaceRoot: string; allowedPrefix: string },
+  ctx: { workspaceRoot: string; allowedPrefix: string; username: string | null; memoryApiUrl: string | null },
 ): Promise<void> {
   const method = req.method ?? "GET";
   const url = req.url ?? "/";
 
   if (url === "/healthz") {
     sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (url.startsWith("/share-snapshot/") && method === "GET") {
+    await handleShareSnapshot(req, res, ctx);
     return;
   }
 
@@ -184,4 +194,59 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
     "Content-Length": Buffer.byteLength(json),
   });
   res.end(json);
+}
+
+async function handleShareSnapshot(
+  req: IncomingMessage,
+  res: ServerResponse,
+  ctx: { username: string | null; memoryApiUrl: string | null },
+): Promise<void> {
+  if (!ctx.username || !ctx.memoryApiUrl) {
+    sendJson(res, 503, { error: "share-snapshot disabled — adapter not configured" });
+    return;
+  }
+
+  const url = new URL(req.url ?? "/", "http://x");
+  // /share-snapshot/<id>/file?path=<relPath>
+  const m = url.pathname.match(/^\/share-snapshot\/([^/]+)\/file$/);
+  if (!m) {
+    sendJson(res, 404, { error: "not_found" });
+    return;
+  }
+  const id = m[1];
+  const relPath = url.searchParams.get("path");
+  if (!relPath) {
+    sendJson(res, 400, { error: "missing_path" });
+    return;
+  }
+
+  const upstream = new URL(`/share/${encodeURIComponent(id)}/snapshot/file`, ctx.memoryApiUrl);
+  upstream.searchParams.set("actor", ctx.username);
+  upstream.searchParams.set("path",  relPath);
+
+  let upstreamRes: Response;
+  try {
+    upstreamRes = await fetch(upstream.toString());
+  } catch (err) {
+    sendJson(res, 502, { error: "upstream_failed", message: (err as Error).message });
+    return;
+  }
+
+  res.statusCode = upstreamRes.status;
+  upstreamRes.headers.forEach((v, k) => {
+    // Allow-list a small set; do not propagate hop-by-hop headers.
+    if (["content-type", "content-length", "cache-control"].includes(k.toLowerCase())) {
+      res.setHeader(k, v);
+    }
+  });
+
+  if (upstreamRes.body) {
+    const reader = upstreamRes.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      res.write(value);
+    }
+  }
+  res.end();
 }

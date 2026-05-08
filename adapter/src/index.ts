@@ -109,7 +109,12 @@ async function main(): Promise<void> {
   const uploadPort = parsePositiveInt(process.env.UPLOAD_PORT, 5000);
   let uploadServer: ReturnType<typeof startUploadServer> | undefined;
   try {
-    uploadServer = startUploadServer({ workspaceRoot, port: uploadPort });
+    uploadServer = startUploadServer({
+      workspaceRoot,
+      port:         uploadPort,
+      username:     dbCfg.username,
+      memoryApiUrl,
+    });
   } catch (err) {
     console.warn(`[upload] failed to start on :${uploadPort}:`, err);
   }
