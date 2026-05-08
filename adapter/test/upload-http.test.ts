@@ -50,7 +50,7 @@ describe("/share-snapshot/:id/file proxy", () => {
     const last = seenUrls.at(-1)!;
     expect(last).toContain("/share/abc/snapshot/file");
     expect(last).toContain("actor=alice");
-    expect(last).toContain("path=demo");
+    expect(last).toMatch(/path=demo(%2F|\/)SKILL\.md/i);
   });
 
   it("propagates 404 from the upstream", async () => {
