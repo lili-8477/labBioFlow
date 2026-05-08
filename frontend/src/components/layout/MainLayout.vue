@@ -12,16 +12,19 @@ import NotebookEditor from '@/components/notebook/NotebookEditor.vue'
 import AgentPanel from '@/components/agents/AgentPanel.vue'
 import MemoryPanel from '@/components/memory/MemoryPanel.vue'
 import SharePanel from '@/components/share/SharePanel.vue'
+import SkillsPanel from '@/components/skills/SkillsPanel.vue'
 import { useNotebookStore } from '@/stores/notebook'
 import { useShareStore } from '@/stores/share'
+import { useSkillsStore } from '@/stores/skills'
 
 const conn = useConnectionStore()
 const chat = useChatStore()
 const files = useFileStore()
 const nb = useNotebookStore()
 const shareStore = useShareStore()
+const skillsStore = useSkillsStore()
 
-type RightPanel = 'none' | 'files' | 'notebook' | 'agents' | 'memory' | 'share'
+type RightPanel = 'none' | 'files' | 'notebook' | 'agents' | 'memory' | 'share' | 'skills'
 
 const STORAGE_KEY = 'bioflow-layout'
 interface LayoutState {
@@ -62,6 +65,7 @@ onMounted(async () => {
 
 function togglePanel(panel: RightPanel) {
   rightPanel.value = rightPanel.value === panel ? 'none' : panel
+  if (rightPanel.value === 'skills') skillsStore.load()
 }
 
 function toggleSidebar() {
@@ -166,6 +170,12 @@ const connStatus = computed(() => {
         >Memory</button>
         <button
           class="panel-tab tb-btn"
+          :class="{ active: rightPanel === 'skills' }"
+          @click="togglePanel('skills')"
+          title="Skills (per-user)"
+        >Skills</button>
+        <button
+          class="panel-tab tb-btn"
           :class="{ active: rightPanel === 'share' }"
           :title="'Share with the org'"
           @click="togglePanel('share')"
@@ -230,6 +240,7 @@ const connStatus = computed(() => {
           <AgentPanel v-else-if="rightPanel === 'agents'" />
           <MemoryPanel v-else-if="rightPanel === 'memory'" />
           <SharePanel v-else-if="rightPanel === 'share'" />
+          <SkillsPanel v-else-if="rightPanel === 'skills'" />
         </aside>
       </template>
     </div>
