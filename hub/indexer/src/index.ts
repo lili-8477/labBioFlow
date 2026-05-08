@@ -2,6 +2,7 @@ import { Pool } from "pg";
 import pino from "pino";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { mkdir } from "node:fs/promises";
 import { loadConfig } from "./config.js";
 import { runMigrations } from "./migrate.js";
 import { startWatcher } from "./watcher.js";
@@ -37,6 +38,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 async function main(): Promise<void> {
   const cfg = loadConfig();
   const logger = pino({ level: cfg.logLevel });
+
+  await mkdir(cfg.shareSnapshotsDir, { recursive: true });
 
   const pool = new Pool({ connectionString: cfg.pgUrl, max: Math.max(10, cfg.maxConcurrentFiles * 2) });
 

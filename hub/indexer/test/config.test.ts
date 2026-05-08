@@ -60,4 +60,23 @@ describe("loadConfig", () => {
     });
     expect(cfg.memoryOrgManager).toBeNull();
   });
+
+  it('shareSnapshotsDir defaults to /workspaces/shared/.share-snapshots', () => {
+    const cfg = loadConfig({ PG_URL: 'postgres://x' });
+    expect(cfg.shareSnapshotsDir).toBe('/workspaces/shared/.share-snapshots');
+  });
+
+  it('shareSnapshotsDir tracks WORKSPACES_ROOT when SHARE_SNAPSHOTS_DIR unset', () => {
+    const cfg = loadConfig({ PG_URL: 'postgres://x', WORKSPACES_ROOT: '/srv/ws' });
+    expect(cfg.shareSnapshotsDir).toBe('/srv/ws/shared/.share-snapshots');
+  });
+
+  it('shareSnapshotsDir uses SHARE_SNAPSHOTS_DIR override when set', () => {
+    const cfg = loadConfig({
+      PG_URL: 'postgres://x',
+      WORKSPACES_ROOT: '/workspaces',
+      SHARE_SNAPSHOTS_DIR: '/var/share-snaps',
+    });
+    expect(cfg.shareSnapshotsDir).toBe('/var/share-snaps');
+  });
 });

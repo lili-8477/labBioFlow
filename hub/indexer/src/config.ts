@@ -15,6 +15,7 @@ export interface Config {
   embedderIntervalMs:   number;
   memoryApiPort:        number;
   memoryOrgManager:     string | null;
+  shareSnapshotsDir:    string;
 }
 
 function parseIntVar(env: Record<string, string | undefined>, name: string, fallback: number): number {
@@ -44,6 +45,9 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   const memoryOrgManager = env.MEMORY_ORG_MANAGER && env.MEMORY_ORG_MANAGER.length > 0
     ? env.MEMORY_ORG_MANAGER
     : null;
+  const shareSnapshotsDir = env.SHARE_SNAPSHOTS_DIR && env.SHARE_SNAPSHOTS_DIR.length > 0
+    ? env.SHARE_SNAPSHOTS_DIR
+    : `${env.WORKSPACES_ROOT ?? "/workspaces"}/shared/.share-snapshots`;
   return {
     pgUrl,
     workspacesRoot: env.WORKSPACES_ROOT ?? "/workspaces",
@@ -57,5 +61,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     embedderIntervalMs:   parseIntVar(env, "EMBEDDER_INTERVAL_MS",   5000),
     memoryApiPort:        parseIntVar(env, "MEMORY_API_PORT",         8400),
     memoryOrgManager,
+    shareSnapshotsDir,
   };
 }
