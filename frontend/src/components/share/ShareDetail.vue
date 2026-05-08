@@ -53,6 +53,9 @@ const facetChips = computed(() => {
 const promotionText = computed(() => {
   const pr = store.selected?.promotion_result as any
   if (!pr) return null
+  if (store.selected?.artifact_kind === 'skill') {
+    return pr.dest_path ? `Installed to ${pr.dest_path}` : 'Skill installed to shared/skills/'
+  }
   if (pr.deduped) return `Already in org as memory ${pr.existing_memory_id}`
   return `Promoted to org as memory ${pr.promoted_memory_id}`
 })

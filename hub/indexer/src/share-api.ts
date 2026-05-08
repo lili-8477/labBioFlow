@@ -240,7 +240,16 @@ export function shareRoutesPlugin(deps: ShareApiDeps) {
       }
 
       const tarPath = path.join(deps.shareSnapshotsDir, `${req.params.id}.tar.gz`);
-      const buf = await extractSingleFile({ srcTar: tarPath, path: relPath });
+      let buf: Buffer | null;
+      try {
+        buf = await extractSingleFile({ srcTar: tarPath, path: relPath });
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+          reply.code(404);
+          return { error: 'snapshot file not found on disk' };
+        }
+        throw e;
+      }
       if (buf === null) {
         reply.code(404);
         return { error: 'file not in snapshot' };

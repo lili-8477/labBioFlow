@@ -466,5 +466,17 @@ describe('share-api plugin', () => {
       expect(res.statusCode).toBe(403);
       expect(res.json()).toMatchObject({ error: 'forbidden' });
     });
+
+    it('returns 404 when the tarball file is missing on disk', async () => {
+      const tarPath = nodePath.join(snapshotsDir, `${SHARE_ID}.tar.gz`);
+      const { rm } = await import('node:fs/promises');
+      await rm(tarPath);
+      const res = await skillApp.inject({
+        method: 'GET',
+        url:    `/share/${SHARE_ID}/snapshot/file?actor=alice&path=demo/SKILL.md`,
+      });
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toEqual({ error: 'snapshot file not found on disk' });
+    });
   });
 });
