@@ -81,7 +81,8 @@ export const shareService = {
    */
   fetchSnapshotFile: async (id: string, relPath: string): Promise<string> => {
     const url = `/share-snapshot/${encodeURIComponent(id)}/file?path=${encodeURIComponent(relPath)}`;
-    const r = await fetch(url, { credentials: 'include' });
+    // Same-origin request — nginx HTTP Basic Auth is carried automatically; no `credentials` flag needed.
+    const r = await fetch(url);
     if (!r.ok) {
       throw new Error(`snapshot file fetch failed (HTTP ${r.status})`);
     }

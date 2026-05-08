@@ -21,6 +21,7 @@ export const useSkillsStore = defineStore('skills', () => {
     }
   }
 
+  /** Delegates to useShareStore().submit. Throws on failure — caller must catch. */
   async function submitShare(name: string, note?: string) {
     const share = useShareStore();
     return await share.submit({ kind: 'skill', ref: name, note });
