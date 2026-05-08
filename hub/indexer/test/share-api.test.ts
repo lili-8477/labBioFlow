@@ -1,8 +1,12 @@
+import * as os from 'node:os';
+import * as fsp from 'node:fs/promises';
+import * as nodePath from 'node:path';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import Fastify from 'fastify';
 import type { Pool } from 'pg';
 import { shareRoutesPlugin, type ShareApiDeps } from '../src/share-api.js';
 import type { ShareRequest } from '../src/share-repo.js';
+import { packSkillTarball } from '../src/share-fs.js';
 
 // Canned ShareRequest returned by getShareRequest happy-path tests.
 const cannedRequest: ShareRequest = {
@@ -362,6 +366,105 @@ describe('share-api plugin', () => {
       expect(res.statusCode).toBe(200);
       expect(depsBag.repo.getShareCapabilities).toHaveBeenCalledTimes(1);
       expect(depsBag.repo.getShareRequest).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── GET /share/:id/snapshot/file ─────────────────────────────────────────
+
+  describe('GET /share/:id/snapshot/file', () => {
+    const SHARE_ID = 'sr-skill-snap-1';
+
+    // Canned skill ShareRequest used in all 3 tests.
+    const skillRequest: ShareRequest = {
+      share_id:         SHARE_ID,
+      artifact_kind:    'skill',
+      artifact_ref:     'demo',
+      snapshot_meta:    { name: 'Demo Skill', description: 'test skill' },
+      requester:        'alice',
+      reviewer:         'li86',
+      status:           'pending',
+      requester_note:   null,
+      review_comment:   null,
+      promotion_result: null,
+      created_at:       '2026-01-01T00:00:00.000Z',
+      decided_at:       null,
+    };
+
+    let tmpDir: string;
+    let snapshotsDir: string;
+    let skillApp: ReturnType<typeof Fastify>;
+    let skillRepo: Record<string, ReturnType<typeof vi.fn>>;
+
+    beforeEach(async () => {
+      // Set up a temp dir with a real skill dir and snapshot tarball.
+      tmpDir      = await fsp.mkdtemp(nodePath.join(os.tmpdir(), 'share-api-snap-test-'));
+      snapshotsDir = nodePath.join(tmpDir, 'snapshots');
+      await fsp.mkdir(snapshotsDir, { recursive: true });
+
+      // Create a minimal skill dir: demo/SKILL.md
+      const skillDir = nodePath.join(tmpDir, 'demo');
+      await fsp.mkdir(skillDir, { recursive: true });
+      await fsp.writeFile(nodePath.join(skillDir, 'SKILL.md'), '# Demo Skill\nHello from snapshot.');
+
+      // Pack it into the snapshots dir as <SHARE_ID>.tar.gz
+      await packSkillTarball({
+        skillDir,
+        destTar: nodePath.join(snapshotsDir, `${SHARE_ID}.tar.gz`),
+      });
+
+      // Build a fresh app with shareSnapshotsDir pointing to our temp dir.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rawRepo: any = {
+        submitShareRequest:   vi.fn(async () => ({ ok: true, share_id: 'sid-1' })),
+        listShareRequests:    vi.fn(async () => ({ items: [], next_cursor: null })),
+        getShareRequest:      vi.fn(async () => ({ ...skillRequest })),
+        decideShareRequest:   vi.fn(async () => ({ ok: true, status: 'approved' })),
+        withdrawShareRequest: vi.fn(async () => ({ ok: true })),
+        getShareCapabilities: vi.fn(async () => ({
+          is_manager: true, manager_username: 'li86', pending_inbox_count: 0, actor_username: 'li86',
+        })),
+      };
+      skillRepo = rawRepo;
+      const skillDeps: ShareApiDeps = {
+        pool:              {} as Pool,
+        manager:           'li86',
+        workspacesRoot:    tmpDir,
+        shareSnapshotsDir: snapshotsDir,
+        repo:              rawRepo as ShareApiDeps['repo'],
+      };
+
+      if (skillApp) await skillApp.close();
+      skillApp = Fastify({ logger: false });
+      await skillApp.register(shareRoutesPlugin(skillDeps));
+    });
+
+    it('happy path: returns 200 with markdown content for existing file', async () => {
+      const res = await skillApp.inject({
+        method: 'GET',
+        url:    `/share/${SHARE_ID}/snapshot/file?actor=alice&path=demo/SKILL.md`,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toMatch(/markdown/);
+      expect(res.body).toContain('Demo Skill');
+    });
+
+    it('404 when path does not exist in snapshot', async () => {
+      const res = await skillApp.inject({
+        method: 'GET',
+        url:    `/share/${SHARE_ID}/snapshot/file?actor=alice&path=missing.txt`,
+      });
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toMatchObject({ error: 'file not in snapshot' });
+    });
+
+    it('403 when actor is neither requester nor reviewer', async () => {
+      skillRepo.getShareRequest!.mockResolvedValueOnce({ error: 'forbidden' });
+      const res = await skillApp.inject({
+        method: 'GET',
+        url:    `/share/${SHARE_ID}/snapshot/file?actor=bob&path=demo/SKILL.md`,
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json()).toMatchObject({ error: 'forbidden' });
     });
   });
 });

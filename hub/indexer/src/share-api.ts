@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import { type FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
@@ -9,6 +10,7 @@ import type {
   withdrawShareRequest,
   getShareCapabilities,
 } from './share-repo.js';
+import { extractSingleFile } from './share-fs.js';
 
 export interface ShareApiDeps {
   pool:               Pool;
@@ -50,6 +52,11 @@ const DecideBody        = z.object({
 });
 const WithdrawBody      = z.object({ actor: z.string().min(1) });
 const CapabilitiesQuery = z.object({ actor: z.string().min(1) });
+
+const SnapshotFileQuery = z.object({
+  actor: z.string().min(1),
+  path:  z.string().min(1),
+});
 
 // ─── Plugin factory ─────────────────────────────────────────────────────────
 
@@ -206,6 +213,50 @@ export function shareRoutesPlugin(deps: ShareApiDeps) {
       // already_decided
       reply.code(409);
       return { error: 'already decided' };
+    });
+
+    // GET /share/:id/snapshot/file — registered BEFORE bare GET /share/:id so
+    // fastify's radix tree picks the literal "/snapshot/file" suffix first.
+    instance.get<{ Params: { id: string } }>('/share/:id/snapshot/file', async (req, reply) => {
+      const parsed = SnapshotFileQuery.safeParse(req.query);
+      if (!parsed.success) {
+        reply.code(400);
+        return { error: 'validation failed', issues: parsed.error.issues };
+      }
+      const { actor, path: relPath } = parsed.data;
+
+      const got = await deps.repo.getShareRequest({
+        pool:    deps.pool,
+        actor,
+        shareId: req.params.id,
+      });
+      if ('error' in got) {
+        reply.code(got.error === 'not_found' ? 404 : 403);
+        return { error: got.error };
+      }
+      if (got.artifact_kind !== 'skill') {
+        reply.code(400);
+        return { error: 'snapshot/file only valid for skill kind' };
+      }
+
+      const tarPath = path.join(deps.shareSnapshotsDir, `${req.params.id}.tar.gz`);
+      const buf = await extractSingleFile({ srcTar: tarPath, path: relPath });
+      if (buf === null) {
+        reply.code(404);
+        return { error: 'file not in snapshot' };
+      }
+
+      // Hardcoded mime sniffing — no new dep. Keep tight.
+      const mt = relPath.endsWith('.md')   ? 'text/markdown'
+               : relPath.endsWith('.json') ? 'application/json'
+               : relPath.endsWith('.txt')  ? 'text/plain'
+               : relPath.endsWith('.py')   ? 'text/x-python'
+               : 'application/octet-stream';
+
+      reply.header('Content-Type', mt);
+      reply.header('Content-Length', buf.byteLength.toString());
+      reply.header('Cache-Control', 'private, max-age=300');
+      return reply.send(buf);
     });
 
     // GET /share/:id — must be registered AFTER literal /share/* routes so
