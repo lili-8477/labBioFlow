@@ -70,7 +70,7 @@ function mapRow(r: ShareRow): ShareRequest {
 
 export interface SubmitArgs {
   pool:               Pool;
-  manager:            string | null;
+  managers:           string[];
   requester:          string;
   kind:               ArtifactKind;
   ref:                string;
@@ -96,7 +96,7 @@ export type SubmitResult =
       detail?: string };
 
 export async function submitShareRequest(args: SubmitArgs): Promise<SubmitResult> {
-  if (args.manager === null) {
+  if (args.managers.length === 0) {
     return { ok: false, reason: "no_manager" };
   }
   if (args.kind === "skill") {
@@ -166,7 +166,7 @@ export async function submitShareRequest(args: SubmitArgs): Promise<SubmitResult
       args.ref,
       snapshot_meta,
       args.requester,
-      args.manager,
+      args.managers[0],
       args.note ?? null,
     ],
   );
@@ -223,7 +223,7 @@ async function submitSkillShareRequest(args: SubmitArgs): Promise<SubmitResult> 
        (share_id, artifact_kind, artifact_ref, snapshot_meta,
         requester, reviewer, requester_note)
      VALUES ($1, 'skill', $2, $3, $4, $5, $6)`,
-    [share_id, args.ref, snapshot_meta, args.requester, args.manager, args.note ?? null],
+    [share_id, args.ref, snapshot_meta, args.requester, args.managers[0], args.note ?? null],
   );
   return { ok: true, share_id };
 }
@@ -285,7 +285,7 @@ async function submitFolderShareRequest(args: SubmitArgs): Promise<SubmitResult>
        (share_id, artifact_kind, artifact_ref, snapshot_meta,
         requester, reviewer, requester_note)
      VALUES ($1, 'folder', $2, $3, $4, $5, $6)`,
-    [share_id, args.ref, snapshot_meta, args.requester, args.manager, args.note ?? null],
+    [share_id, args.ref, snapshot_meta, args.requester, args.managers[0], args.note ?? null],
   );
   return { ok: true, share_id };
 }
@@ -293,10 +293,10 @@ async function submitFolderShareRequest(args: SubmitArgs): Promise<SubmitResult>
 // ─── 2. listShareRequests ───────────────────────────────────────────────────
 
 export interface ListArgs {
-  pool:    Pool;
-  actor:   string;
-  manager: string | null;
-  role:    "outbox" | "inbox" | "all";
+  pool:     Pool;
+  actor:    string;
+  managers: string[];
+  role:     "outbox" | "inbox" | "all";
   status?: ShareStatus;
   limit?:  number;
   cursor?: string; // ISO created_at; rows with created_at < cursor
@@ -310,9 +310,9 @@ export interface ListResult {
 export async function listShareRequests(args: ListArgs): Promise<ListResult> {
   const limit = Math.min(args.limit ?? 50, 200);
 
-  // inbox: only the manager sees their inbox
+  // inbox: only managers see the inbox
   if (args.role === "inbox") {
-    if (args.actor !== args.manager) {
+    if (!args.managers.includes(args.actor)) {
       return { items: [], next_cursor: null };
     }
   }
@@ -325,8 +325,8 @@ export async function listShareRequests(args: ListArgs): Promise<ListResult> {
     params.push(args.actor);
     conditions.push(`requester = $${params.length}`);
   } else if (args.role === "inbox") {
-    params.push(args.actor);
-    conditions.push(`reviewer = $${params.length}`);
+    // Multi-manager: any manager sees every pending request. The `reviewer`
+    // column is informational (stamped with managers[0] at submit time).
     conditions.push(`status = 'pending'`);
   } else {
     // all
@@ -404,7 +404,7 @@ export async function getShareRequest(args: {
 export interface DecideArgs {
   pool:               Pool;
   actor:              string;
-  manager:            string | null;
+  managers:           string[];
   shareId:            string;
   decision:           "approve" | "reject";
   comment?:           string;
@@ -424,7 +424,7 @@ export type DecideResult =
       detail?: string };
 
 export async function decideShareRequest(args: DecideArgs): Promise<DecideResult> {
-  if (args.manager === null || args.actor !== args.manager) {
+  if (!args.managers.includes(args.actor)) {
     return { ok: false, reason: "forbidden" };
   }
 
@@ -757,30 +757,29 @@ export async function withdrawShareRequest(args: {
 // ─── 6. getShareCapabilities ────────────────────────────────────────────────
 
 export async function getShareCapabilities(args: {
-  pool:    Pool;
-  actor:   string;
-  manager: string | null;
+  pool:     Pool;
+  actor:    string;
+  managers: string[];
 }): Promise<{
   is_manager:           boolean;
-  manager_username:     string | null;
+  manager_usernames:    string[];
   pending_inbox_count:  number;
   actor_username:       string;
 }> {
-  const is_manager = args.manager !== null && args.actor === args.manager;
+  const is_manager = args.managers.includes(args.actor);
 
   let pending_inbox_count = 0;
   if (is_manager) {
     const r = await args.pool.query<{ count: string }>(
       `SELECT COUNT(*)::text AS count FROM share_requests
-        WHERE reviewer = $1 AND status = 'pending'`,
-      [args.actor],
+        WHERE status = 'pending'`,
     );
     pending_inbox_count = parseInt(r.rows[0]!.count, 10);
   }
 
   return {
     is_manager,
-    manager_username:    args.manager,
+    manager_usernames:   args.managers,
     pending_inbox_count,
     actor_username:      args.actor,
   };

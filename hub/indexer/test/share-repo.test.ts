@@ -134,7 +134,7 @@ describe("submitShareRequest", () => {
 
     const result = await submitShareRequest({
       pool,
-      manager:   MANAGER,
+      managers:  [MANAGER],
       requester: ALICE,
       kind:      "memory",
       ref,
@@ -168,19 +168,19 @@ describe("submitShareRequest", () => {
 
   it("returns no_manager when manager is null", async () => {
     const ref = await seedMemory({ username: ALICE });
-    const result = await submitShareRequest({ pool, manager: null, requester: ALICE, kind: "memory", ref, workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused", maxFolderBytes: 100 * 1024 * 1024 });
+    const result = await submitShareRequest({ pool, managers: [], requester: ALICE, kind: "memory", ref, workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused", maxFolderBytes: 100 * 1024 * 1024 });
     expect(result).toEqual({ ok: false, reason: "no_manager" });
   });
 
   it("returns forbidden when source memory_id is owned by a different user", async () => {
     const ref = await seedMemory({ username: BOB });
-    const result = await submitShareRequest({ pool, manager: MANAGER, requester: ALICE, kind: "memory", ref, workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused", maxFolderBytes: 100 * 1024 * 1024 });
+    const result = await submitShareRequest({ pool, managers: [MANAGER], requester: ALICE, kind: "memory", ref, workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused", maxFolderBytes: 100 * 1024 * 1024 });
     expect(result).toEqual({ ok: false, reason: "forbidden" });
   });
 
   it("returns forbidden when source memory is soft-deleted", async () => {
     const ref = await seedMemory({ username: ALICE, deleted: true });
-    const result = await submitShareRequest({ pool, manager: MANAGER, requester: ALICE, kind: "memory", ref, workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused", maxFolderBytes: 100 * 1024 * 1024 });
+    const result = await submitShareRequest({ pool, managers: [MANAGER], requester: ALICE, kind: "memory", ref, workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused", maxFolderBytes: 100 * 1024 * 1024 });
     expect(result).toEqual({ ok: false, reason: "forbidden" });
   });
 });
@@ -193,7 +193,7 @@ describe("listShareRequests", () => {
     const s2 = await seedRequest({ requester: ALICE, status: "approved" });
     const _s3 = await seedRequest({ requester: BOB, status: "pending" }); // not alice's
 
-    const result = await listShareRequests({ pool, actor: ALICE, manager: MANAGER, role: "outbox" });
+    const result = await listShareRequests({ pool, actor: ALICE, managers: [MANAGER], role: "outbox" });
     const ids = result.items.map((x) => x.share_id);
     expect(ids).toContain(s1);
     expect(ids).toContain(s2);
@@ -208,11 +208,11 @@ describe("listShareRequests", () => {
     await seedRequest({ requester: ALICE, status: "approved", reviewer: MANAGER });
 
     // Non-manager gets empty list
-    const asAlice = await listShareRequests({ pool, actor: ALICE, manager: MANAGER, role: "inbox" });
+    const asAlice = await listShareRequests({ pool, actor: ALICE, managers: [MANAGER], role: "inbox" });
     expect(asAlice.items).toHaveLength(0);
 
     // Manager gets only pending
-    const asManager = await listShareRequests({ pool, actor: MANAGER, manager: MANAGER, role: "inbox" });
+    const asManager = await listShareRequests({ pool, actor: MANAGER, managers: [MANAGER], role: "inbox" });
     expect(asManager.items.every((x) => x.status === "pending")).toBe(true);
     expect(asManager.items.length).toBe(1);
   });
@@ -223,7 +223,7 @@ describe("listShareRequests", () => {
     const s3 = await seedRequest({ requester: BOB,   reviewer: ALICE });
     const s4 = await seedRequest({ requester: BOB,   reviewer: BOB });
 
-    const result = await listShareRequests({ pool, actor: ALICE, manager: MANAGER, role: "all" });
+    const result = await listShareRequests({ pool, actor: ALICE, managers: [MANAGER], role: "all" });
     const ids = result.items.map((x) => x.share_id);
     expect(ids).toContain(s1);
     expect(ids).not.toContain(s2); // alice not involved
@@ -236,7 +236,7 @@ describe("listShareRequests", () => {
     const approved = await seedRequest({ requester: ALICE, status: "approved" });
 
     const result = await listShareRequests({
-      pool, actor: ALICE, manager: MANAGER, role: "outbox", status: "approved",
+      pool, actor: ALICE, managers: [MANAGER], role: "outbox", status: "approved",
     });
     const ids = result.items.map((x) => x.share_id);
     expect(ids).toContain(approved);
@@ -257,7 +257,7 @@ describe("listShareRequests", () => {
     }
 
     const reference = await listShareRequests({
-      pool, actor: ALICE, manager: MANAGER, role: "outbox", limit: 200,
+      pool, actor: ALICE, managers: [MANAGER], role: "outbox", limit: 200,
     });
     const refIds = new Set(reference.items.map((x) => x.share_id));
     expect(refIds.size).toBe(5);
@@ -267,7 +267,7 @@ describe("listShareRequests", () => {
     let pages = 0;
     do {
       const page = await listShareRequests({
-        pool, actor: ALICE, manager: MANAGER, role: "outbox", limit: 2, cursor,
+        pool, actor: ALICE, managers: [MANAGER], role: "outbox", limit: 2, cursor,
       });
       for (const item of page.items) collected.add(item.share_id);
       cursor = page.next_cursor ?? undefined;
@@ -295,7 +295,7 @@ describe("listShareRequests", () => {
     let pages = 0;
     do {
       const page = await listShareRequests({
-        pool, actor: ALICE, manager: MANAGER, role: "outbox", limit: 2, cursor,
+        pool, actor: ALICE, managers: [MANAGER], role: "outbox", limit: 2, cursor,
       });
       for (const item of page.items) collected.add(item.share_id);
       cursor = page.next_cursor ?? undefined;
@@ -344,12 +344,12 @@ describe("decideShareRequest", () => {
     const ref = await seedMemory({ username: ALICE, body: "shared content" });
 
     // Submit so snapshot is frozen
-    const sub = await submitShareRequest({ pool, manager: MANAGER, requester: ALICE, kind: "memory", ref, workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused", maxFolderBytes: 100 * 1024 * 1024 });
+    const sub = await submitShareRequest({ pool, managers: [MANAGER], requester: ALICE, kind: "memory", ref, workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused", maxFolderBytes: 100 * 1024 * 1024 });
     expect(sub.ok).toBe(true);
     if (!sub.ok) throw new Error("unreachable");
 
     const result = await decideShareRequest({
-      pool, actor: MANAGER, manager: MANAGER, shareId: sub.share_id, decision: "approve",
+      pool, actor: MANAGER, managers: [MANAGER], shareId: sub.share_id, decision: "approve",
       workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused",
     });
 
@@ -427,7 +427,7 @@ describe("decideShareRequest", () => {
     );
 
     const result = await decideShareRequest({
-      pool, actor: MANAGER, manager: MANAGER, shareId, decision: "approve",
+      pool, actor: MANAGER, managers: [MANAGER], shareId, decision: "approve",
       workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused",
     });
 
@@ -446,7 +446,7 @@ describe("decideShareRequest", () => {
 
   it("reject memory: status→rejected, review_comment stored, no DB row created in memories", async () => {
     const ref = await seedMemory({ username: ALICE });
-    const sub = await submitShareRequest({ pool, manager: MANAGER, requester: ALICE, kind: "memory", ref, workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused", maxFolderBytes: 100 * 1024 * 1024 });
+    const sub = await submitShareRequest({ pool, managers: [MANAGER], requester: ALICE, kind: "memory", ref, workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused", maxFolderBytes: 100 * 1024 * 1024 });
     expect(sub.ok).toBe(true);
     if (!sub.ok) throw new Error("unreachable");
 
@@ -455,7 +455,7 @@ describe("decideShareRequest", () => {
     )).rows[0]!.count;
 
     const result = await decideShareRequest({
-      pool, actor: MANAGER, manager: MANAGER, shareId: sub.share_id,
+      pool, actor: MANAGER, managers: [MANAGER], shareId: sub.share_id,
       decision: "reject", comment: "not relevant",
       workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused",
     });
@@ -478,7 +478,7 @@ describe("decideShareRequest", () => {
   it("returns forbidden when actor != manager", async () => {
     const shareId = await seedRequest({ requester: ALICE, reviewer: MANAGER });
     const result = await decideShareRequest({
-      pool, actor: ALICE, manager: MANAGER, shareId, decision: "approve",
+      pool, actor: ALICE, managers: [MANAGER], shareId, decision: "approve",
       workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused",
     });
     expect(result).toEqual({ ok: false, reason: "forbidden" });
@@ -487,7 +487,7 @@ describe("decideShareRequest", () => {
   it("returns forbidden when manager is null", async () => {
     const shareId = await seedRequest({ requester: ALICE, reviewer: MANAGER });
     const result = await decideShareRequest({
-      pool, actor: MANAGER, manager: null, shareId, decision: "approve",
+      pool, actor: MANAGER, managers: [], shareId, decision: "approve",
       workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused",
     });
     expect(result).toEqual({ ok: false, reason: "forbidden" });
@@ -495,18 +495,18 @@ describe("decideShareRequest", () => {
 
   it("returns already_decided when called twice on the same share_id", async () => {
     const ref = await seedMemory({ username: ALICE });
-    const sub = await submitShareRequest({ pool, manager: MANAGER, requester: ALICE, kind: "memory", ref, workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused", maxFolderBytes: 100 * 1024 * 1024 });
+    const sub = await submitShareRequest({ pool, managers: [MANAGER], requester: ALICE, kind: "memory", ref, workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused", maxFolderBytes: 100 * 1024 * 1024 });
     expect(sub.ok).toBe(true);
     if (!sub.ok) throw new Error("unreachable");
 
     const first = await decideShareRequest({
-      pool, actor: MANAGER, manager: MANAGER, shareId: sub.share_id, decision: "reject",
+      pool, actor: MANAGER, managers: [MANAGER], shareId: sub.share_id, decision: "reject",
       workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused",
     });
     expect(first.ok).toBe(true);
 
     const second = await decideShareRequest({
-      pool, actor: MANAGER, manager: MANAGER, shareId: sub.share_id, decision: "approve",
+      pool, actor: MANAGER, managers: [MANAGER], shareId: sub.share_id, decision: "approve",
       workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused",
     });
     expect(second).toMatchObject({ ok: false, reason: "already_decided" });
@@ -518,7 +518,7 @@ describe("decideShareRequest", () => {
     // Guards the shape-validation path in approveSkillShareRequest.
     const shareId = await seedRequest({ requester: ALICE, kind: "skill", ref: "single-cell-qc" });
     const result = await decideShareRequest({
-      pool, actor: MANAGER, manager: MANAGER, shareId, decision: "approve",
+      pool, actor: MANAGER, managers: [MANAGER], shareId, decision: "approve",
       workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused",
     });
     expect(result).toMatchObject({ ok: false, reason: "promotion_failed" });
@@ -546,7 +546,7 @@ describe("decideShareRequest", () => {
       [shareId, { not_a_snapshot: true }, ALICE, MANAGER],
     );
     const result = await decideShareRequest({
-      pool, actor: MANAGER, manager: MANAGER, shareId, decision: "approve",
+      pool, actor: MANAGER, managers: [MANAGER], shareId, decision: "approve",
       workspacesRoot: "/tmp/unused", shareSnapshotsDir: "/tmp/unused",
     });
     expect(result).toMatchObject({ ok: false, reason: "promotion_failed" });
@@ -594,11 +594,11 @@ describe("withdrawShareRequest", () => {
 
 describe("getShareCapabilities", () => {
   it("non-manager: is_manager=false, pending_inbox_count=0, actor_username matches", async () => {
-    const caps = await getShareCapabilities({ pool, actor: ALICE, manager: MANAGER });
+    const caps = await getShareCapabilities({ pool, actor: ALICE, managers: [MANAGER] });
     expect(caps.is_manager).toBe(false);
     expect(caps.pending_inbox_count).toBe(0);
     expect(caps.actor_username).toBe(ALICE);
-    expect(caps.manager_username).toBe(MANAGER);
+    expect(caps.manager_usernames).toEqual([MANAGER]);
   });
 
   it("manager: is_manager=true, count reflects pending rows where reviewer=actor", async () => {
@@ -606,18 +606,18 @@ describe("getShareCapabilities", () => {
     await seedRequest({ requester: BOB,   reviewer: MANAGER, status: "pending" });
     await seedRequest({ requester: ALICE, reviewer: MANAGER, status: "approved" }); // not pending
 
-    const caps = await getShareCapabilities({ pool, actor: MANAGER, manager: MANAGER });
+    const caps = await getShareCapabilities({ pool, actor: MANAGER, managers: [MANAGER] });
     expect(caps.is_manager).toBe(true);
     expect(caps.pending_inbox_count).toBe(2);
     expect(caps.actor_username).toBe(MANAGER);
-    expect(caps.manager_username).toBe(MANAGER);
+    expect(caps.manager_usernames).toEqual([MANAGER]);
   });
 
   it("manager null: is_manager=false even if actor matches some username", async () => {
-    const caps = await getShareCapabilities({ pool, actor: MANAGER, manager: null });
+    const caps = await getShareCapabilities({ pool, actor: MANAGER, managers: [] });
     expect(caps.is_manager).toBe(false);
     expect(caps.pending_inbox_count).toBe(0);
-    expect(caps.manager_username).toBeNull();
+    expect(caps.manager_usernames).toEqual([]);
   });
 });
 
@@ -639,7 +639,7 @@ describe("submitShareRequest skill branch", () => {
 
   it("happy path: packs a tarball and writes a pending row", async () => {
     const r = await submitShareRequest({
-      pool, manager: "li86", requester: "alice",
+      pool, managers: ["li86"], requester: "alice",
       kind: "skill", ref: "single-cell",
       workspacesRoot, shareSnapshotsDir, maxFolderBytes: 100 * 1024 * 1024,
     });
@@ -664,7 +664,7 @@ describe("submitShareRequest skill branch", () => {
 
   it("rejects ../ path traversal with invalid_ref", async () => {
     const r = await submitShareRequest({
-      pool, manager: "li86", requester: "alice",
+      pool, managers: ["li86"], requester: "alice",
       kind: "skill", ref: "../../etc",
       workspacesRoot, shareSnapshotsDir, maxFolderBytes: 100 * 1024 * 1024,
     });
@@ -673,7 +673,7 @@ describe("submitShareRequest skill branch", () => {
 
   it("returns source_not_found when the skill folder does not exist", async () => {
     const r = await submitShareRequest({
-      pool, manager: "li86", requester: "alice",
+      pool, managers: ["li86"], requester: "alice",
       kind: "skill", ref: "no-such-skill",
       workspacesRoot, shareSnapshotsDir, maxFolderBytes: 100 * 1024 * 1024,
     });
@@ -686,7 +686,7 @@ describe("submitShareRequest skill branch", () => {
     await mkdir(skill, { recursive: true });
     await writeFile(path.join(skill, "qc.py"), "x");
     const r = await submitShareRequest({
-      pool, manager: "li86", requester: "alice",
+      pool, managers: ["li86"], requester: "alice",
       kind: "skill", ref: "no-manifest",
       workspacesRoot, shareSnapshotsDir, maxFolderBytes: 100 * 1024 * 1024,
     });
@@ -715,7 +715,7 @@ describe("decideShareRequest skill approve branch", () => {
 
   it("approves a pending skill request and untars to shared/skills/", async () => {
     const submitR = await submitShareRequest({
-      pool, manager: "li86", requester: "alice",
+      pool, managers: ["li86"], requester: "alice",
       kind: "skill", ref: "demo",
       workspacesRoot, shareSnapshotsDir, maxFolderBytes: 100 * 1024 * 1024,
     });
@@ -723,7 +723,7 @@ describe("decideShareRequest skill approve branch", () => {
     if (!submitR.ok) throw new Error("type guard");
 
     const decideR = await decideShareRequest({
-      pool, actor: "li86", manager: "li86",
+      pool, actor: "li86", managers: ["li86"],
       shareId: submitR.share_id, decision: "approve", comment: "looks good",
       workspacesRoot, shareSnapshotsDir,
     });
@@ -744,14 +744,14 @@ describe("decideShareRequest skill approve branch", () => {
     await mkdir(path.join(workspacesRoot, "shared", "skills", "demo"), { recursive: true });
 
     const submitR = await submitShareRequest({
-      pool, manager: "li86", requester: "alice",
+      pool, managers: ["li86"], requester: "alice",
       kind: "skill", ref: "demo",
       workspacesRoot, shareSnapshotsDir, maxFolderBytes: 100 * 1024 * 1024,
     });
     if (!submitR.ok) throw new Error("setup failed");
 
     const decideR = await decideShareRequest({
-      pool, actor: "li86", manager: "li86",
+      pool, actor: "li86", managers: ["li86"],
       shareId: submitR.share_id, decision: "approve",
       workspacesRoot, shareSnapshotsDir,
     });
@@ -766,7 +766,7 @@ describe("decideShareRequest skill approve branch", () => {
 
   it("snapshot survives source deletion (manager reviews frozen content)", async () => {
     const submitR = await submitShareRequest({
-      pool, manager: "li86", requester: "alice",
+      pool, managers: ["li86"], requester: "alice",
       kind: "skill", ref: "demo",
       workspacesRoot, shareSnapshotsDir, maxFolderBytes: 100 * 1024 * 1024,
     });
@@ -776,7 +776,7 @@ describe("decideShareRequest skill approve branch", () => {
     await rm(path.join(workspacesRoot, "alice", ".claude", "skills", "demo"), { recursive: true });
 
     const decideR = await decideShareRequest({
-      pool, actor: "li86", manager: "li86",
+      pool, actor: "li86", managers: ["li86"],
       shareId: submitR.share_id, decision: "approve",
       workspacesRoot, shareSnapshotsDir,
     });
@@ -803,7 +803,7 @@ describe("submitShareRequest folder branch", () => {
 
   it("happy path: packs a tarball and writes a pending folder row", async () => {
     const r = await submitShareRequest({
-      pool, manager: "li86", requester: "alice",
+      pool, managers: ["li86"], requester: "alice",
       kind: "folder", ref: "pbmc",
       workspacesRoot, shareSnapshotsDir, maxFolderBytes,
     });
@@ -830,7 +830,7 @@ describe("submitShareRequest folder branch", () => {
     await mkdir(proj, { recursive: true });
     await writeFile(path.join(proj, "data.csv"), "a,b\n1,2\n");
     const r = await submitShareRequest({
-      pool, manager: "li86", requester: "alice",
+      pool, managers: ["li86"], requester: "alice",
       kind: "folder", ref: "no-readme",
       workspacesRoot, shareSnapshotsDir, maxFolderBytes,
     });
@@ -843,7 +843,7 @@ describe("submitShareRequest folder branch", () => {
 
   it("rejects ../ path traversal with invalid_ref", async () => {
     const r = await submitShareRequest({
-      pool, manager: "li86", requester: "alice",
+      pool, managers: ["li86"], requester: "alice",
       kind: "folder", ref: "../../etc",
       workspacesRoot, shareSnapshotsDir, maxFolderBytes,
     });
@@ -852,7 +852,7 @@ describe("submitShareRequest folder branch", () => {
 
   it("returns source_not_found when the folder does not exist", async () => {
     const r = await submitShareRequest({
-      pool, manager: "li86", requester: "alice",
+      pool, managers: ["li86"], requester: "alice",
       kind: "folder", ref: "no-such-project",
       workspacesRoot, shareSnapshotsDir, maxFolderBytes,
     });
@@ -863,7 +863,7 @@ describe("submitShareRequest folder branch", () => {
   it("rejects folder exceeding maxFolderBytes with oversize", async () => {
     // Use a small cap so we don't have to generate 100MB.
     const r = await submitShareRequest({
-      pool, manager: "li86", requester: "alice",
+      pool, managers: ["li86"], requester: "alice",
       kind: "folder", ref: "pbmc",
       workspacesRoot, shareSnapshotsDir,
       maxFolderBytes: 10,           // 10-byte cap
@@ -893,14 +893,14 @@ describe("decideShareRequest folder approve branch", () => {
 
   it("approves a pending folder request and untars to shared/projects/", async () => {
     const submitR = await submitShareRequest({
-      pool, manager: "li86", requester: "alice",
+      pool, managers: ["li86"], requester: "alice",
       kind: "folder", ref: "demo",
       workspacesRoot, shareSnapshotsDir, maxFolderBytes,
     });
     if (!submitR.ok) throw new Error("setup failed");
 
     const decideR = await decideShareRequest({
-      pool, actor: "li86", manager: "li86",
+      pool, actor: "li86", managers: ["li86"],
       shareId: submitR.share_id, decision: "approve", comment: "lgtm",
       workspacesRoot, shareSnapshotsDir,
     });
@@ -918,13 +918,13 @@ describe("decideShareRequest folder approve branch", () => {
   it("rejects approve when shared/projects/<name> already exists (collision)", async () => {
     await mkdir(path.join(workspacesRoot, "shared", "projects", "demo"), { recursive: true });
     const submitR = await submitShareRequest({
-      pool, manager: "li86", requester: "alice",
+      pool, managers: ["li86"], requester: "alice",
       kind: "folder", ref: "demo",
       workspacesRoot, shareSnapshotsDir, maxFolderBytes,
     });
     if (!submitR.ok) throw new Error("setup failed");
     const decideR = await decideShareRequest({
-      pool, actor: "li86", manager: "li86",
+      pool, actor: "li86", managers: ["li86"],
       shareId: submitR.share_id, decision: "approve",
       workspacesRoot, shareSnapshotsDir,
     });
@@ -934,7 +934,7 @@ describe("decideShareRequest folder approve branch", () => {
 
   it("snapshot survives source deletion", async () => {
     const submitR = await submitShareRequest({
-      pool, manager: "li86", requester: "alice",
+      pool, managers: ["li86"], requester: "alice",
       kind: "folder", ref: "demo",
       workspacesRoot, shareSnapshotsDir, maxFolderBytes,
     });
@@ -943,10 +943,84 @@ describe("decideShareRequest folder approve branch", () => {
     await rm(path.join(workspacesRoot, "alice", "local_projects", "demo"), { recursive: true });
 
     const decideR = await decideShareRequest({
-      pool, actor: "li86", manager: "li86",
+      pool, actor: "li86", managers: ["li86"],
       shareId: submitR.share_id, decision: "approve",
       workspacesRoot, shareSnapshotsDir,
     });
     expect(decideR.ok).toBe(true);
+  });
+});
+
+// ─── multi-manager ────────────────────────────────────────────────────────────
+
+describe("multi-manager", () => {
+  let workspacesRoot: string;
+  let shareSnapshotsDir: string;
+  const maxFolderBytes = 100 * 1024 * 1024;
+  const managers = ['li86', 'alice'];
+
+  beforeEach(async () => {
+    workspacesRoot    = await mkdtemp(path.join(tmpdir(), "ws-"));
+    shareSnapshotsDir = await mkdtemp(path.join(tmpdir(), "snap-"));
+    // Clean share_requests so counts start fresh.
+    await pool.query(`DELETE FROM share_requests`);
+  });
+
+  /** Helper: insert a pending memory share row using bob as requester, li86+alice as managers. */
+  async function seedPending(): Promise<string> {
+    // Use the existing seedMemory helper to insert a valid memory row for bob.
+    const memId = await seedMemory({ username: 'bob' });
+    const r = await submitShareRequest({
+      pool, managers, requester: 'bob',
+      kind: 'memory', ref: memId,
+      workspacesRoot, shareSnapshotsDir, maxFolderBytes,
+    });
+    if (!r.ok) throw new Error('seed failed: ' + (r as any).reason);
+    return r.share_id;
+  }
+
+  it("any manager can approve any pending request", async () => {
+    const id = await seedPending();
+    // alice (not the primary, but in the managers list) approves
+    const r = await decideShareRequest({
+      pool, actor: 'alice', managers,
+      shareId: id, decision: 'approve',
+      workspacesRoot, shareSnapshotsDir,
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it("a non-manager cannot decide", async () => {
+    const id = await seedPending();
+    const r = await decideShareRequest({
+      pool, actor: 'bob', managers,
+      shareId: id, decision: 'approve',
+      workspacesRoot, shareSnapshotsDir,
+    });
+    expect(r).toMatchObject({ ok: false, reason: 'forbidden' });
+  });
+
+  it("every manager sees the same pending inbox", async () => {
+    await seedPending();
+    await seedPending();
+    for (const m of managers) {
+      const list = await listShareRequests({
+        pool, actor: m, managers, role: 'inbox',
+      });
+      expect(list.items).toHaveLength(2);
+    }
+  });
+
+  it("getShareCapabilities returns is_manager=true for every manager and pending count", async () => {
+    await seedPending();
+    for (const m of managers) {
+      const caps = await getShareCapabilities({ pool, actor: m, managers });
+      expect(caps.is_manager).toBe(true);
+      expect(caps.manager_usernames).toEqual(managers);
+      expect(caps.pending_inbox_count).toBe(1);
+    }
+    const caps = await getShareCapabilities({ pool, actor: 'bob', managers });
+    expect(caps.is_manager).toBe(false);
+    expect(caps.pending_inbox_count).toBe(0);
   });
 });
