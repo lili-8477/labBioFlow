@@ -63,3 +63,35 @@ export async function cleanupOldSnapshots(args: CleanupArgs): Promise<CleanupRes
 
   return result;
 }
+
+export interface AutoCloseArgs {
+  pool:      Pool;
+  idleDays:  number;
+}
+
+export interface AutoCloseResult {
+  closed: number;     // rows transitioned pending → auto_rejected
+}
+
+/** Transition pending share_requests rows older than `idleDays` to status
+ *  'auto_rejected'. Stamps decided_at + review_comment for forensic clarity.
+ *  Idempotent: re-running picks up nothing because previously-closed rows
+ *  have status != 'pending'. */
+export async function autoCloseIdleRequests(args: AutoCloseArgs): Promise<AutoCloseResult> {
+  if (!Number.isInteger(args.idleDays) || args.idleDays < 1) {
+    throw new RangeError(`idleDays must be a positive integer, got ${args.idleDays}`);
+  }
+
+  const comment = `auto-rejected after ${args.idleDays} days idle`;
+  const r = await args.pool.query(
+    `UPDATE share_requests
+        SET status = 'auto_rejected',
+            decided_at = now(),
+            review_comment = $1
+      WHERE status = 'pending'
+        AND created_at < now() - make_interval(days => $2)`,
+    [comment, args.idleDays],
+  );
+
+  return { closed: r.rowCount ?? 0 };
+}

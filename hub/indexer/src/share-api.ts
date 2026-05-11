@@ -40,7 +40,7 @@ const SubmitBody = z.object({
 const ListQuery = z.object({
   actor:  z.string().min(1),
   role:   z.enum(['outbox', 'inbox', 'all']),
-  status: z.enum(['pending', 'approved', 'rejected', 'withdrawn']).optional(),
+  status: z.enum(['pending', 'approved', 'rejected', 'withdrawn', 'auto_rejected']).optional(),
   limit:  z.coerce.number().int().positive().max(200).optional(),
   cursor: z.string().optional(), // tuple cursor "ISO|uuid"; not validateable as plain ISO
 });
