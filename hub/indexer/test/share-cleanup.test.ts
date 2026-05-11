@@ -10,22 +10,23 @@ import { cleanupOldSnapshots, autoCloseIdleRequests } from "../src/share-cleanup
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
+let pgc: StartedPostgreSqlContainer;
+let pool: Pool;
+
+beforeAll(async () => {
+  pgc  = await new PostgreSqlContainer("pgvector/pgvector:pg16").start();
+  pool = new Pool({ connectionString: pgc.getConnectionUri() });
+  await runMigrations({
+    pool,
+    migrationsDir: path.resolve(HERE, "..", "migrations"),
+    lockKey:       0xdeadbeefn,
+  });
+}, 60_000);
+
+afterAll(async () => { await pool.end(); await pgc.stop(); });
+
 describe("cleanupOldSnapshots", () => {
-  let pgc: StartedPostgreSqlContainer;
-  let pool: Pool;
   let snapshotsDir: string;
-
-  beforeAll(async () => {
-    pgc  = await new PostgreSqlContainer("pgvector/pgvector:pg16").start();
-    pool = new Pool({ connectionString: pgc.getConnectionUri() });
-    await runMigrations({
-      pool,
-      migrationsDir: path.resolve(HERE, "..", "migrations"),
-      lockKey:       0xdeadbeefn,
-    });
-  }, 60_000);
-
-  afterAll(async () => { await pool.end(); await pgc.stop(); });
 
   beforeEach(async () => {
     snapshotsDir = await mkdtemp(path.join(tmpdir(), "snap-cleanup-"));
@@ -131,21 +132,6 @@ describe("cleanupOldSnapshots", () => {
 });
 
 describe("autoCloseIdleRequests", () => {
-  let pgc: StartedPostgreSqlContainer;
-  let pool: Pool;
-
-  beforeAll(async () => {
-    pgc  = await new PostgreSqlContainer("pgvector/pgvector:pg16").start();
-    pool = new Pool({ connectionString: pgc.getConnectionUri() });
-    await runMigrations({
-      pool,
-      migrationsDir: path.resolve(HERE, "..", "migrations"),
-      lockKey:       0xdeadbeefn,
-    });
-  }, 60_000);
-
-  afterAll(async () => { await pool.end(); await pgc.stop(); });
-
   beforeEach(async () => {
     await pool.query(`DELETE FROM share_requests`);
   });
