@@ -40,25 +40,24 @@ describe("loadConfig", () => {
       .toThrow(/MAX_CONCURRENT_FILES/);
   });
 
-  it("memoryOrgManager defaults to null when MEMORY_ORG_MANAGER is unset", () => {
-    const cfg = loadConfig({ PG_URL: "postgres://x" });
-    expect(cfg.memoryOrgManager).toBeNull();
+  it('memoryOrgManagers defaults to [] when MEMORY_ORG_MANAGER is unset', () => {
+    const cfg = loadConfig({ PG_URL: 'postgres://x' });
+    expect(cfg.memoryOrgManagers).toEqual([]);
   });
 
-  it("memoryOrgManager reads MEMORY_ORG_MANAGER as-is", () => {
-    const cfg = loadConfig({
-      PG_URL: "postgres://x",
-      MEMORY_ORG_MANAGER: "li86",
-    });
-    expect(cfg.memoryOrgManager).toBe("li86");
+  it('memoryOrgManagers reads a single name', () => {
+    const cfg = loadConfig({ PG_URL: 'postgres://x', MEMORY_ORG_MANAGER: 'li86' });
+    expect(cfg.memoryOrgManagers).toEqual(['li86']);
   });
 
-  it("memoryOrgManager treats empty string as null", () => {
-    const cfg = loadConfig({
-      PG_URL: "postgres://x",
-      MEMORY_ORG_MANAGER: "",
-    });
-    expect(cfg.memoryOrgManager).toBeNull();
+  it('memoryOrgManagers parses a comma-separated list and trims whitespace', () => {
+    const cfg = loadConfig({ PG_URL: 'postgres://x', MEMORY_ORG_MANAGER: 'li86, alice ,bob' });
+    expect(cfg.memoryOrgManagers).toEqual(['li86', 'alice', 'bob']);
+  });
+
+  it('memoryOrgManagers treats empty string and stray commas as empty list', () => {
+    const cfg = loadConfig({ PG_URL: 'postgres://x', MEMORY_ORG_MANAGER: ',, ,' });
+    expect(cfg.memoryOrgManagers).toEqual([]);
   });
 
   it('shareSnapshotsDir defaults to /workspaces/shared/.share-snapshots', () => {

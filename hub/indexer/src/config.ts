@@ -14,7 +14,7 @@ export interface Config {
   embedderBatchSize:    number;
   embedderIntervalMs:   number;
   memoryApiPort:        number;
-  memoryOrgManager:     string | null;
+  memoryOrgManagers:    string[];
   shareSnapshotsDir:          string;
   shareMaxFolderBytes:        number;
   shareSnapshotTtlDays:       number;
@@ -45,9 +45,10 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   const pgUrl = env.PG_URL;
   if (!pgUrl) throw new Error("PG_URL is required");
   const logLevel = (env.LOG_LEVEL ?? "info") as Config["logLevel"];
-  const memoryOrgManager = env.MEMORY_ORG_MANAGER && env.MEMORY_ORG_MANAGER.length > 0
-    ? env.MEMORY_ORG_MANAGER
-    : null;
+  const memoryOrgManagers = (env.MEMORY_ORG_MANAGER ?? "")
+    .split(",")
+    .map(s => s.trim())
+    .filter(s => s.length > 0);
   const shareSnapshotsDir = env.SHARE_SNAPSHOTS_DIR && env.SHARE_SNAPSHOTS_DIR.length > 0
     ? env.SHARE_SNAPSHOTS_DIR
     : `${env.WORKSPACES_ROOT ?? "/workspaces"}/shared/.share-snapshots`;
@@ -66,7 +67,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     embedderBatchSize:    parseIntVar(env, "EMBEDDER_BATCH_SIZE",      64),
     embedderIntervalMs:   parseIntVar(env, "EMBEDDER_INTERVAL_MS",   5000),
     memoryApiPort:        parseIntVar(env, "MEMORY_API_PORT",         8400),
-    memoryOrgManager,
+    memoryOrgManagers,
     shareSnapshotsDir,
     shareMaxFolderBytes,
     shareSnapshotTtlDays,
