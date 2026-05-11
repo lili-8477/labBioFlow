@@ -11,6 +11,7 @@ import type { FileEntry } from '@/types'
 import FileContextMenu from './FileContextMenu.vue'
 import MoveToModal from './MoveToModal.vue'
 import UploadDestModal from './UploadDestModal.vue'
+import ShareFolderModal from './ShareFolderModal.vue'
 
 const emit = defineEmits<{
   (e: 'open-file', path: string): void
@@ -85,6 +86,19 @@ const moveSource = ref<string | null>(null)
 // decides whether the user wants to upload files or a folder; we stay
 // out of that choice until the modal emits.
 const uploadModalOpen = ref<boolean>(false)
+
+const shareModal = ref<{ folderName: string } | null>(null)
+
+function isShareableProject(fe: FlatEntry): boolean {
+  if (fe.entry.type !== 'directory') return false
+  const m = fe.path.match(/^local_projects\/([^/]+)$/)
+  return m !== null
+}
+
+function openShareModalFor(fe: FlatEntry) {
+  const m = fe.path.match(/^local_projects\/([^/]+)$/)
+  if (m) shareModal.value = { folderName: m[1] }
+}
 
 function openMoveTo(fe: FlatEntry) {
   moveSource.value = fe.path
@@ -615,11 +629,13 @@ function fmtBytes(n: number): string {
       :x="ctxMenu.x"
       :y="ctxMenu.y"
       :type="ctxMenu.fe.entry.type"
+      :shareable="isShareableProject(ctxMenu.fe)"
       @rename="(startRename(ctxMenu.fe), closeCtxMenu())"
       @move-to="(openMoveTo(ctxMenu.fe), closeCtxMenu())"
       @new-file="(startNewItemIn(ctxMenu.fe, 'file'), closeCtxMenu())"
       @new-folder="(startNewItemIn(ctxMenu.fe, 'directory'), closeCtxMenu())"
       @delete="(handleDelete(ctxMenu.fe), closeCtxMenu())"
+      @share="(openShareModalFor(ctxMenu.fe), closeCtxMenu())"
       @close="closeCtxMenu"
     />
 
@@ -634,6 +650,12 @@ function fmtBytes(n: number): string {
       v-if="uploadModalOpen"
       @pick="onUploadDestPick"
       @close="uploadModalOpen = false"
+    />
+
+    <ShareFolderModal
+      v-if="shareModal"
+      :folder-name="shareModal.folderName"
+      @close="shareModal = null"
     />
 
     <div v-if="treeError" class="tree-error" role="alert">

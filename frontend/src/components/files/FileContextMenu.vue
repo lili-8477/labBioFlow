@@ -5,6 +5,7 @@ const props = defineProps<{
   x: number
   y: number
   type: 'file' | 'directory'
+  shareable?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -13,6 +14,7 @@ const emit = defineEmits<{
   (e: 'new-file'): void
   (e: 'new-folder'): void
   (e: 'delete'): void
+  (e: 'share'): void
   (e: 'close'): void
 }>()
 
@@ -35,13 +37,14 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', onKey)
 })
 
-function pick(action: 'rename' | 'move-to' | 'new-file' | 'new-folder' | 'delete') {
+function pick(action: 'rename' | 'move-to' | 'new-file' | 'new-folder' | 'delete' | 'share') {
   switch (action) {
     case 'rename': emit('rename'); break
     case 'move-to': emit('move-to'); break
     case 'new-file': emit('new-file'); break
     case 'new-folder': emit('new-folder'); break
     case 'delete': emit('delete'); break
+    case 'share': emit('share'); break
   }
   emit('close')
 }
@@ -54,6 +57,13 @@ function pick(action: 'rename' | 'move-to' | 'new-file' | 'new-folder' | 'delete
     :style="{ left: x + 'px', top: y + 'px' }"
     role="menu"
   >
+    <button
+      v-if="shareable"
+      class="ctx-item ctx-item-accent"
+      role="menuitem"
+      @click="pick('share')"
+    >Share with org</button>
+    <div v-if="shareable" class="ctx-sep" />
     <button class="ctx-item" role="menuitem" @click="pick('rename')">Rename</button>
     <button class="ctx-item" role="menuitem" @click="pick('move-to')">Move to…</button>
     <div class="ctx-sep" />
@@ -91,6 +101,8 @@ function pick(action: 'rename' | 'move-to' | 'new-file' | 'new-folder' | 'delete
 }
 .ctx-item:hover { background: var(--bg-tertiary); }
 .ctx-danger { color: var(--danger); }
+.ctx-item-accent { color: var(--accent); font-weight: var(--fw-semi); }
+.ctx-item-accent:hover { background: var(--accent-soft); }
 .ctx-sep {
   height: 1px;
   background: var(--border);
