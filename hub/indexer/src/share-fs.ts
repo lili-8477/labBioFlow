@@ -84,6 +84,18 @@ export async function readSkillManifest(skillDir: string): Promise<string | null
   }
 }
 
+/** Reads README.md if present, returns its full text; else null.
+ *  Folder-kind analogue of readSkillManifest. README is optional — folders
+ *  without one still snapshot (the file tree is the source of truth). */
+export async function readFolderReadme(folderDir: string): Promise<string | null> {
+  try {
+    return await readFile(path.join(folderDir, "README.md"), "utf8");
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw e;
+  }
+}
+
 /** Tar+gzip the skill directory into destTar. The tarball entries are stored
  *  with paths relative to the skill folder's PARENT, so the top-level entry
  *  is the skill folder name itself. (Symmetric with extractSkillTarball below

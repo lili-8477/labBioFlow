@@ -16,6 +16,7 @@ export interface Config {
   memoryApiPort:        number;
   memoryOrgManager:     string | null;
   shareSnapshotsDir:    string;
+  shareMaxFolderBytes:  number;
 }
 
 function parseIntVar(env: Record<string, string | undefined>, name: string, fallback: number): number {
@@ -48,6 +49,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   const shareSnapshotsDir = env.SHARE_SNAPSHOTS_DIR && env.SHARE_SNAPSHOTS_DIR.length > 0
     ? env.SHARE_SNAPSHOTS_DIR
     : `${env.WORKSPACES_ROOT ?? "/workspaces"}/shared/.share-snapshots`;
+  const shareMaxFolderBytes = parseIntVar(env, "SHARE_MAX_FOLDER_BYTES", 100 * 1024 * 1024);
   return {
     pgUrl,
     workspacesRoot: env.WORKSPACES_ROOT ?? "/workspaces",
@@ -62,5 +64,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     memoryApiPort:        parseIntVar(env, "MEMORY_API_PORT",         8400),
     memoryOrgManager,
     shareSnapshotsDir,
+    shareMaxFolderBytes,
   };
 }

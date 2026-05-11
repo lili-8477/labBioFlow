@@ -6,6 +6,7 @@ import {
   safeJoin,
   walkSkillFiles,
   readSkillManifest,
+  readFolderReadme,
   packSkillTarball,
   extractSkillTarball,
   extractSingleFile,
@@ -88,6 +89,20 @@ describe("readSkillManifest", () => {
     const skill = path.join(root, "s");
     await mkdir(skill);
     expect(await readSkillManifest(skill)).toBeNull();
+  });
+});
+
+describe("readFolderReadme", () => {
+  it("returns the file body when README.md exists", async () => {
+    const folder = path.join(root, "f");
+    await mkdir(folder);
+    await writeFile(path.join(folder, "README.md"), "# project");
+    expect(await readFolderReadme(folder)).toBe("# project");
+  });
+  it("returns null when README.md is absent (unlike SKILL.md, README is optional)", async () => {
+    const folder = path.join(root, "f");
+    await mkdir(folder);
+    expect(await readFolderReadme(folder)).toBeNull();
   });
 });
 

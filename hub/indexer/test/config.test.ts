@@ -79,4 +79,19 @@ describe("loadConfig", () => {
     });
     expect(cfg.shareSnapshotsDir).toBe('/var/share-snaps');
   });
+
+  it('shareMaxFolderBytes defaults to 100 MB', () => {
+    const cfg = loadConfig({ PG_URL: 'postgres://x' });
+    expect(cfg.shareMaxFolderBytes).toBe(100 * 1024 * 1024);
+  });
+
+  it('shareMaxFolderBytes reads SHARE_MAX_FOLDER_BYTES env', () => {
+    const cfg = loadConfig({ PG_URL: 'postgres://x', SHARE_MAX_FOLDER_BYTES: '5242880' });
+    expect(cfg.shareMaxFolderBytes).toBe(5 * 1024 * 1024);
+  });
+
+  it('shareMaxFolderBytes rejects non-integer SHARE_MAX_FOLDER_BYTES', () => {
+    expect(() => loadConfig({ PG_URL: 'postgres://x', SHARE_MAX_FOLDER_BYTES: 'huge' }))
+      .toThrow(/integer/);
+  });
 });
