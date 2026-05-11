@@ -863,3 +863,80 @@ describe("submitShareRequest folder branch", () => {
     expect((r as any).detail).toMatch(/exceeds cap 10/);
   });
 });
+
+// ─── decideShareRequest folder approve branch ─────────────────────────────────
+
+describe("decideShareRequest folder approve branch", () => {
+  let workspacesRoot: string;
+  let shareSnapshotsDir: string;
+  const maxFolderBytes = 100 * 1024 * 1024;
+
+  beforeEach(async () => {
+    workspacesRoot    = await mkdtemp(path.join(tmpdir(), "ws-"));
+    shareSnapshotsDir = await mkdtemp(path.join(tmpdir(), "snap-"));
+    await mkdir(path.join(workspacesRoot, "shared", "projects"), { recursive: true });
+    const proj = path.join(workspacesRoot, "alice", "local_projects", "demo");
+    await mkdir(proj, { recursive: true });
+    await writeFile(path.join(proj, "README.md"), "# demo");
+    await writeFile(path.join(proj, "run.sh"), "#!/bin/bash\necho hi\n");
+  });
+
+  it("approves a pending folder request and untars to shared/projects/", async () => {
+    const submitR = await submitShareRequest({
+      pool, manager: "li86", requester: "alice",
+      kind: "folder", ref: "demo",
+      workspacesRoot, shareSnapshotsDir, maxFolderBytes,
+    });
+    if (!submitR.ok) throw new Error("setup failed");
+
+    const decideR = await decideShareRequest({
+      pool, actor: "li86", manager: "li86",
+      shareId: submitR.share_id, decision: "approve", comment: "lgtm",
+      workspacesRoot, shareSnapshotsDir,
+    });
+    expect(decideR.ok).toBe(true);
+    if (!decideR.ok) throw new Error("type guard");
+    expect(decideR.promotion_result?.dest_path).toBe(
+      path.join(workspacesRoot, "shared", "projects", "demo"));
+
+    const { readFile } = await import("node:fs/promises");
+    const readme = await readFile(
+      path.join(workspacesRoot, "shared", "projects", "demo", "README.md"), "utf8");
+    expect(readme).toMatch(/demo/);
+  });
+
+  it("rejects approve when shared/projects/<name> already exists (collision)", async () => {
+    await mkdir(path.join(workspacesRoot, "shared", "projects", "demo"), { recursive: true });
+    const submitR = await submitShareRequest({
+      pool, manager: "li86", requester: "alice",
+      kind: "folder", ref: "demo",
+      workspacesRoot, shareSnapshotsDir, maxFolderBytes,
+    });
+    if (!submitR.ok) throw new Error("setup failed");
+    const decideR = await decideShareRequest({
+      pool, actor: "li86", manager: "li86",
+      shareId: submitR.share_id, decision: "approve",
+      workspacesRoot, shareSnapshotsDir,
+    });
+    expect(decideR.ok).toBe(false);
+    expect((decideR as any).reason).toBe("collision");
+  });
+
+  it("snapshot survives source deletion", async () => {
+    const submitR = await submitShareRequest({
+      pool, manager: "li86", requester: "alice",
+      kind: "folder", ref: "demo",
+      workspacesRoot, shareSnapshotsDir, maxFolderBytes,
+    });
+    if (!submitR.ok) throw new Error("setup failed");
+    const { rm } = await import("node:fs/promises");
+    await rm(path.join(workspacesRoot, "alice", "local_projects", "demo"), { recursive: true });
+
+    const decideR = await decideShareRequest({
+      pool, actor: "li86", manager: "li86",
+      shareId: submitR.share_id, decision: "approve",
+      workspacesRoot, shareSnapshotsDir,
+    });
+    expect(decideR.ok).toBe(true);
+  });
+});

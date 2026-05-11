@@ -481,6 +481,26 @@ export async function decideShareRequest(args: DecideArgs): Promise<DecideResult
       await client.query("COMMIT");
       return { ok: true, status: "approved", promotion_result: result.promotion_result };
     }
+    if (row.artifact_kind === "folder") {
+      const result = await approveFolderShareRequest({
+        row,
+        workspacesRoot:    args.workspacesRoot,
+        shareSnapshotsDir: args.shareSnapshotsDir,
+      });
+      if (!result.ok) {
+        await client.query("ROLLBACK");
+        return result;
+      }
+      await client.query(
+        `UPDATE share_requests
+            SET status = 'approved', decided_at = now(),
+                review_comment = $1, promotion_result = $2
+          WHERE share_id = $3`,
+        [args.comment ?? null, result.promotion_result, args.shareId],
+      );
+      await client.query("COMMIT");
+      return { ok: true, status: "approved", promotion_result: result.promotion_result };
+    }
     if (row.artifact_kind !== "memory") {
       await client.query("ROLLBACK");
       return {
@@ -629,6 +649,65 @@ async function approveSkillShareRequest(args: {
   };
 
   return { ok: true, promotion_result };
+}
+
+async function approveFolderShareRequest(args: {
+  row:                ShareRow;
+  workspacesRoot:     string;
+  shareSnapshotsDir:  string;
+}): Promise<
+  | { ok: true; promotion_result: Record<string, unknown> }
+  | { ok: false; reason: "promotion_failed" | "collision"; detail?: string }
+> {
+  const { row } = args;
+
+  // Validate snapshot shape.
+  const meta = row.snapshot_meta as Record<string, unknown>;
+  if (
+    typeof meta.root_name !== "string" ||
+    !Array.isArray(meta.files) ||
+    typeof meta.total_bytes !== "number"
+  ) {
+    return { ok: false, reason: "promotion_failed",
+             detail: "snapshot_meta missing root_name/files/total_bytes" };
+  }
+  const rootName = meta.root_name;
+
+  // Defence-in-depth: root_name was basename()'d at submit, but validate again.
+  const sharedProjects = path.join(args.workspacesRoot, "shared", "projects");
+  const destDir = safeJoin(sharedProjects, rootName);
+  if (destDir === null) {
+    return { ok: false, reason: "promotion_failed", detail: "snapshot root_name is invalid" };
+  }
+
+  // Collision check — same rule as skill: any existing path is a collision.
+  try {
+    await stat(destDir);
+    return {
+      ok: false, reason: "collision",
+      detail: `shared/projects/${rootName} already exists`,
+    };
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+  }
+
+  const tarPath = path.join(args.shareSnapshotsDir, `${row.share_id}.tar.gz`);
+  let written: string[];
+  try {
+    written = await extractSkillTarball({ srcTar: tarPath, destParent: sharedProjects });
+  } catch (e) {
+    return { ok: false, reason: "promotion_failed",
+             detail: `untar failed: ${(e as Error).message}` };
+  }
+
+  return {
+    ok: true,
+    promotion_result: {
+      dest_path:    destDir,
+      copied_files: written,
+      total_bytes:  meta.total_bytes,
+    },
+  };
 }
 
 // ─── 5. withdrawShareRequest ────────────────────────────────────────────────
