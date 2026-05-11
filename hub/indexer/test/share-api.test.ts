@@ -35,12 +35,12 @@ function makeDeps(): { deps: ShareApiDeps; repo: Record<string, ReturnType<typeo
     withdrawShareRequest: vi.fn(async () => ({ ok: true })),
     getShareCapabilities: vi.fn(async () => ({
       is_manager:          true,
-      manager_username:    'li86',
+      manager_usernames:   ['li86'],
       pending_inbox_count: 3,
       actor_username:      'li86',
     })),
   };
-  const deps: ShareApiDeps = { pool: {} as Pool, manager: 'li86', workspacesRoot: '/tmp/unused', shareSnapshotsDir: '/tmp/unused', shareMaxFolderBytes: 100 * 1024 * 1024, repo: repo as ShareApiDeps['repo'] };
+  const deps: ShareApiDeps = { pool: {} as Pool, managers: ['li86'], workspacesRoot: '/tmp/unused', shareSnapshotsDir: '/tmp/unused', shareMaxFolderBytes: 100 * 1024 * 1024, repo: repo as ShareApiDeps['repo'] };
   return { deps, repo };
 }
 
@@ -68,14 +68,14 @@ describe('share-api plugin', () => {
       expect(depsBag.repo.submitShareRequest).toHaveBeenCalledTimes(1);
       const arg = depsBag.repo.submitShareRequest.mock.calls[0]![0];
       expect(arg.pool).toBe(depsBag.deps.pool);
-      expect(arg.manager).toBe('li86');
+      expect(arg.managers).toEqual(['li86']);
       expect(arg.requester).toBe('alice');
       expect(arg.kind).toBe('memory');
       expect(arg.ref).toBe('mem-ref-1');
     });
 
-    it('503 when deps.manager is null (sharing disabled)', async () => {
-      depsBag.deps.manager = null;
+    it('503 when deps.managers is empty (sharing disabled)', async () => {
+      depsBag.deps.managers = [];
       const res = await app.inject({ method: 'POST', url: '/share/submit', payload: validBody });
       expect(res.statusCode).toBe(503);
       expect(res.json()).toMatchObject({ error: expect.stringContaining('sharing disabled') });
@@ -136,7 +136,7 @@ describe('share-api plugin', () => {
       const arg = depsBag.repo.listShareRequests.mock.calls[0]![0];
       expect(arg.pool).toBe(depsBag.deps.pool);
       expect(arg.actor).toBe('alice');
-      expect(arg.manager).toBe('li86');
+      expect(arg.managers).toEqual(['li86']);
       expect(arg.role).toBe('outbox');
     });
 
@@ -174,14 +174,33 @@ describe('share-api plugin', () => {
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({
         is_manager:          true,
-        manager_username:    'li86',
+        manager_usernames:   ['li86'],
         pending_inbox_count: 3,
         actor_username:      'li86',
       });
       const arg = depsBag.repo.getShareCapabilities.mock.calls[0]![0];
       expect(arg.pool).toBe(depsBag.deps.pool);
       expect(arg.actor).toBe('li86');
-      expect(arg.manager).toBe('li86');
+      expect(arg.managers).toEqual(['li86']);
+    });
+
+    it('returns manager_usernames array and is_manager for any listed user', async () => {
+      vi.mocked(depsBag.repo.getShareCapabilities).mockResolvedValueOnce({
+        is_manager: true,
+        manager_usernames: ['li86', 'alice'],
+        pending_inbox_count: 3,
+        actor_username: 'alice',
+      });
+      const res = await app.inject({
+        method: 'GET',
+        url:    '/share/capabilities?actor=alice',
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({
+        is_manager: true,
+        manager_usernames: ['li86', 'alice'],
+        pending_inbox_count: 3,
+      });
     });
 
     it('400 when actor is missing', async () => {
@@ -248,7 +267,7 @@ describe('share-api plugin', () => {
       const arg = depsBag.repo.decideShareRequest.mock.calls[0]![0];
       expect(arg.pool).toBe(depsBag.deps.pool);
       expect(arg.actor).toBe('li86');
-      expect(arg.manager).toBe('li86');
+      expect(arg.managers).toEqual(['li86']);
       expect(arg.shareId).toBe('sr-abc-123');
       expect(arg.decision).toBe('approve');
     });
@@ -433,13 +452,13 @@ describe('share-api plugin', () => {
         decideShareRequest:   vi.fn(async () => ({ ok: true, status: 'approved' })),
         withdrawShareRequest: vi.fn(async () => ({ ok: true })),
         getShareCapabilities: vi.fn(async () => ({
-          is_manager: true, manager_username: 'li86', pending_inbox_count: 0, actor_username: 'li86',
+          is_manager: true, manager_usernames: ['li86'], pending_inbox_count: 0, actor_username: 'li86',
         })),
       };
       skillRepo = rawRepo;
       const skillDeps: ShareApiDeps = {
         pool:                {} as Pool,
-        manager:             'li86',
+        managers:            ['li86'],
         workspacesRoot:      tmpDir,
         shareSnapshotsDir:   snapshotsDir,
         shareMaxFolderBytes: 100 * 1024 * 1024,

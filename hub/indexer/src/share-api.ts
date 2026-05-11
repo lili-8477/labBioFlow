@@ -14,7 +14,7 @@ import { extractSingleFile } from './share-fs.js';
 
 export interface ShareApiDeps {
   pool:                Pool;
-  manager:             string | null;
+  managers:            string[];
   workspacesRoot:      string;
   shareSnapshotsDir:   string;
   shareMaxFolderBytes: number;          // NEW
@@ -62,14 +62,14 @@ const SnapshotFileQuery = z.object({
 // ─── Plugin factory ─────────────────────────────────────────────────────────
 
 // Call shareRoutesPlugin(deps) to get an async fastify plugin you can pass to
-// app.register(...). Closes over deps so routes have pool/manager/repo without
+// app.register(...). Closes over deps so routes have pool/managers/repo without
 // threading them through route signatures.
 export function shareRoutesPlugin(deps: ShareApiDeps) {
   return async function (instance: FastifyInstance) {
 
     // POST /share/submit
     instance.post('/share/submit', async (req, reply) => {
-      if (deps.manager === null) {
+      if (deps.managers.length === 0) {
         reply.code(503);
         return { error: 'sharing disabled — no manager configured' };
       }
@@ -81,7 +81,7 @@ export function shareRoutesPlugin(deps: ShareApiDeps) {
       const b = parsed.data;
       const result = await deps.repo.submitShareRequest({
         pool:               deps.pool,
-        manager:            deps.manager,
+        managers:           deps.managers,
         requester:          b.requester,
         kind:               b.kind,
         ref:                b.ref,
@@ -123,13 +123,13 @@ export function shareRoutesPlugin(deps: ShareApiDeps) {
       }
       const q = parsed.data;
       return await deps.repo.listShareRequests({
-        pool:    deps.pool,
-        actor:   q.actor,
-        manager: deps.manager,
-        role:    q.role,
-        status:  q.status,
-        limit:   q.limit,
-        cursor:  q.cursor,
+        pool:     deps.pool,
+        actor:    q.actor,
+        managers: deps.managers,
+        role:     q.role,
+        status:   q.status,
+        limit:    q.limit,
+        cursor:   q.cursor,
       });
     });
 
@@ -142,9 +142,9 @@ export function shareRoutesPlugin(deps: ShareApiDeps) {
         return { error: 'validation failed', issues: parsed.error.issues };
       }
       return await deps.repo.getShareCapabilities({
-        pool:    deps.pool,
-        actor:   parsed.data.actor,
-        manager: deps.manager,
+        pool:     deps.pool,
+        actor:    parsed.data.actor,
+        managers: deps.managers,
       });
     });
 
@@ -160,7 +160,7 @@ export function shareRoutesPlugin(deps: ShareApiDeps) {
       const result = await deps.repo.decideShareRequest({
         pool:              deps.pool,
         actor:             b.actor,
-        manager:           deps.manager,
+        managers:          deps.managers,
         shareId:           req.params.id,
         decision:          b.decision,
         comment:           b.comment,
@@ -230,9 +230,10 @@ export function shareRoutesPlugin(deps: ShareApiDeps) {
       const { actor, path: relPath } = parsed.data;
 
       const got = await deps.repo.getShareRequest({
-        pool:    deps.pool,
+        pool:     deps.pool,
         actor,
-        shareId: req.params.id,
+        managers: deps.managers,
+        shareId:  req.params.id,
       });
       if ('error' in got) {
         reply.code(got.error === 'not_found' ? 404 : 403);
@@ -281,9 +282,10 @@ export function shareRoutesPlugin(deps: ShareApiDeps) {
         return { error: 'validation failed', issues: parsed.error.issues };
       }
       const result = await deps.repo.getShareRequest({
-        pool:    deps.pool,
-        actor:   parsed.data.actor,
-        shareId: req.params.id,
+        pool:     deps.pool,
+        actor:    parsed.data.actor,
+        managers: deps.managers,
+        shareId:  req.params.id,
       });
       if ('error' in result) {
         if (result.error === 'not_found') {
