@@ -24,6 +24,7 @@ import {
 } from "./memory-repo.js";
 import { writeDistillation } from "./distiller-repo.js";
 import { shareRoutesPlugin } from "./share-api.js";
+import { cleanupOldSnapshots } from "./share-cleanup.js";
 import {
   submitShareRequest,
   listShareRequests,
@@ -88,6 +89,30 @@ async function main(): Promise<void> {
   };
 
   startEmbedderLoop();
+
+  const startCleanupLoop = (): void => {
+    const intervalMs = cfg.shareCleanupIntervalHours * 60 * 60 * 1000;
+    const tick = async (): Promise<void> => {
+      try {
+        const result = await cleanupOldSnapshots({
+          pool,
+          snapshotsDir: cfg.shareSnapshotsDir,
+          ttlDays:      cfg.shareSnapshotTtlDays,
+        });
+        if (result.scanned > 0) {
+          logger.info({ result }, "share snapshot cleanup pass");
+        }
+      } catch (err) {
+        logger.error({ err }, "share snapshot cleanup crashed");
+      } finally {
+        setTimeout(tick, intervalMs);
+      }
+    };
+    // Boot-time pass after a brief delay so the rest of startup logs are clean.
+    setTimeout(tick, 5_000);
+  };
+
+  startCleanupLoop();
 
   const app = buildApp({
     pool,
