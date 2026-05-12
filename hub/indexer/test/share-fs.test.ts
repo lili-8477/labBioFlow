@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdir, mkdtemp, rm, writeFile, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile, symlink, readFile, readdir, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
@@ -10,6 +10,7 @@ import {
   packSkillTarball,
   extractSkillTarball,
   extractSingleFile,
+  atomicReplaceSkillDir,
 } from "../src/share-fs.js";
 
 let root: string;
@@ -156,5 +157,82 @@ describe("extractSingleFile", () => {
     const tarPath = path.join(root, "snap.tar.gz");
     await packSkillTarball({ skillDir: skill, destTar: tarPath });
     expect(await extractSingleFile({ srcTar: tarPath, path: "missing.txt" })).toBeNull();
+  });
+});
+
+describe("atomicReplaceSkillDir", () => {
+  it("replaces an existing skill dir with new contents from a tarball", async () => {
+    const sharedSkillsDir = path.join(root, "shared-skills");
+    await mkdir(path.join(sharedSkillsDir, "single-cell"), { recursive: true });
+    await writeFile(path.join(sharedSkillsDir, "single-cell", "SKILL.md"), "old\n");
+    await writeFile(path.join(sharedSkillsDir, "single-cell", "v1.py"), "v=1");
+
+    const newSrc = path.join(root, "src-single-cell");
+    await mkdir(newSrc, { recursive: true });
+    await writeFile(path.join(newSrc, "SKILL.md"), "new\n");
+    await writeFile(path.join(newSrc, "v2.py"), "v=2");
+    const tarPath = path.join(root, "snap.tar.gz");
+    await packSkillTarball({ skillDir: newSrc, destTar: tarPath });
+
+    await atomicReplaceSkillDir({
+      srcTar: tarPath, sharedSkillsDir, name: "single-cell", shareId: "abc",
+    });
+
+    expect(await readFile(path.join(sharedSkillsDir, "single-cell", "SKILL.md"), "utf8")).toBe("new\n");
+    expect(await readFile(path.join(sharedSkillsDir, "single-cell", "v2.py"), "utf8")).toBe("v=2");
+    await expect(access(path.join(sharedSkillsDir, "single-cell", "v1.py"))).rejects.toThrow();
+  });
+
+  it("leaves no .new or .old siblings on success", async () => {
+    const sharedSkillsDir = path.join(root, "shared-skills");
+    await mkdir(path.join(sharedSkillsDir, "alpha"), { recursive: true });
+    await writeFile(path.join(sharedSkillsDir, "alpha", "SKILL.md"), "x");
+    const newSrc = path.join(root, "src-alpha");
+    await mkdir(newSrc, { recursive: true });
+    await writeFile(path.join(newSrc, "SKILL.md"), "y");
+    const tarPath = path.join(root, "snap.tar.gz");
+    await packSkillTarball({ skillDir: newSrc, destTar: tarPath });
+
+    await atomicReplaceSkillDir({
+      srcTar: tarPath, sharedSkillsDir, name: "alpha", shareId: "abc123",
+    });
+
+    const entries = await readdir(sharedSkillsDir);
+    expect(entries).toEqual(["alpha"]);
+  });
+
+  it("rejects when target directory does not exist", async () => {
+    const sharedSkillsDir = path.join(root, "shared-skills");
+    await mkdir(sharedSkillsDir, { recursive: true });
+
+    const newSrc = path.join(root, "src-gamma");
+    await mkdir(newSrc, { recursive: true });
+    await writeFile(path.join(newSrc, "SKILL.md"), "x");
+    const tarPath = path.join(root, "snap.tar.gz");
+    await packSkillTarball({ skillDir: newSrc, destTar: tarPath });
+
+    await expect(atomicReplaceSkillDir({
+      srcTar: tarPath, sharedSkillsDir, name: "gamma", shareId: "abc",
+    })).rejects.toThrow(/ENOENT/);
+  });
+
+  it("returns the list of paths written", async () => {
+    const sharedSkillsDir = path.join(root, "shared-skills");
+    await mkdir(path.join(sharedSkillsDir, "beta"), { recursive: true });
+    await writeFile(path.join(sharedSkillsDir, "beta", "SKILL.md"), "old");
+    const newSrc = path.join(root, "src-beta");
+    await mkdir(path.join(newSrc, "scripts"), { recursive: true });
+    await writeFile(path.join(newSrc, "SKILL.md"), "new");
+    await writeFile(path.join(newSrc, "scripts", "run.sh"), "echo hi");
+    const tarPath = path.join(root, "snap.tar.gz");
+    await packSkillTarball({ skillDir: newSrc, destTar: tarPath });
+
+    const written = await atomicReplaceSkillDir({
+      srcTar: tarPath, sharedSkillsDir, name: "beta", shareId: "abc",
+    });
+    expect(written).toEqual(expect.arrayContaining([
+      expect.stringContaining("SKILL.md"),
+      expect.stringContaining("scripts/run.sh"),
+    ]));
   });
 });

@@ -15,6 +15,8 @@ import {
   readFile,
   readdir,
   realpath,
+  rename,
+  rm as rmFs,
 } from "node:fs/promises";
 import * as path from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -143,6 +145,74 @@ export async function extractSkillTarball(opts: {
       written.push(entry.path);
     },
   });
+  return written;
+}
+
+/** Atomically replace a directory under `sharedSkillsDir` with the contents
+ *  of `srcTar`. The replace is done via untar-to-sibling + rename-swap:
+ *
+ *    1. untar to <sharedSkillsDir>/.<name>.new.<shareId>/  (top-level becomes <name>)
+ *    2. hoist its inner <name>/ contents up so .new.<shareId>/ IS the new tree
+ *    3. rename <sharedSkillsDir>/<name>/ → .<name>.old.<shareId>/
+ *    4. rename .<name>.new.<shareId>/   → <name>/
+ *    5. rm -rf .<name>.old.<shareId>/
+ *
+ *  There is a brief window between steps 3 and 4 where the target name does
+ *  not exist. Any read of <name> in that window gets ENOENT — acceptable
+ *  for the use case (single-tenant indexer, skill files read lazily by
+ *  Claude Code on tool registration).
+ *
+ *  On rename failure between steps 3 and 4, we best-effort restore the old
+ *  directory back to its original name and rethrow. The .new dir is left
+ *  in place for manual cleanup.
+ *
+ *  Returns the list of paths written (from extractSkillTarball's onentry). */
+export async function atomicReplaceSkillDir(opts: {
+  srcTar:           string;
+  sharedSkillsDir:  string;
+  name:             string;     // skill folder basename (caller used safeJoin)
+  shareId:          string;     // for temp-dir naming
+}): Promise<string[]> {
+  const newDir = path.join(opts.sharedSkillsDir, `.${opts.name}.new.${opts.shareId}`);
+  const oldDir = path.join(opts.sharedSkillsDir, `.${opts.name}.old.${opts.shareId}`);
+  const target = path.join(opts.sharedSkillsDir, opts.name);
+
+  // Step 1: untar to a fresh parent. extractSkillTarball writes its top-level
+  // entry (the skill folder, named <opts.name>) inside destParent.
+  await mkdir(newDir, { recursive: true });
+  const written = await extractSkillTarball({
+    srcTar:     opts.srcTar,
+    destParent: newDir,
+  });
+
+  // Step 2: hoist <newDir>/<topLevelDir>/* up so newDir itself IS the new tree.
+  // The tarball top-level dir name equals the basename of the source skillDir
+  // passed to packSkillTarball, which may differ from opts.name. Derive it
+  // from the first written path segment.
+  const topLevelDir = written.length > 0
+    ? written[0]!.split("/")[0]!
+    : opts.name;
+  const innerExtracted = path.join(newDir, topLevelDir);
+  const hoistTmp = path.join(opts.sharedSkillsDir, `.${opts.name}.hoist.${opts.shareId}`);
+  await rename(innerExtracted, hoistTmp);
+  await rmFs(newDir, { recursive: true, force: true });
+  await rename(hoistTmp, newDir);
+
+  // Step 3: move existing target aside.
+  await rename(target, oldDir);
+
+  // Step 4: install new.
+  try {
+    await rename(newDir, target);
+  } catch (e) {
+    // Best-effort restore so the system has SOMETHING at the target name.
+    try { await rename(oldDir, target); } catch { /* swallow */ }
+    throw e;
+  }
+
+  // Step 5: delete .old (best-effort; failure here is non-fatal to the caller).
+  await rmFs(oldDir, { recursive: true, force: true });
+
   return written;
 }
 
