@@ -695,6 +695,80 @@ describe("submitShareRequest skill branch", () => {
   });
 });
 
+// ─── submitShareRequest skill_update branch ───────────────────────────────────
+
+describe("submitShareRequest skill_update branch", () => {
+  let workspacesRoot: string;
+  let shareSnapshotsDir: string;
+  const maxFolderBytes = 100 * 1024 * 1024;
+
+  beforeEach(async () => {
+    workspacesRoot    = await mkdtemp(path.join(tmpdir(), "ws-"));
+    shareSnapshotsDir = await mkdtemp(path.join(tmpdir(), "snap-"));
+    // alice's source skill
+    const skill = path.join(workspacesRoot, "alice", ".claude", "skills", "single-cell");
+    await mkdir(skill, { recursive: true });
+    await writeFile(path.join(skill, "SKILL.md"), "# v2\n");
+    await writeFile(path.join(skill, "qc.py"), "v=2");
+    // existing org skill
+    const orgSkill = path.join(workspacesRoot, "shared", "skills", "single-cell");
+    await mkdir(orgSkill, { recursive: true });
+    await writeFile(path.join(orgSkill, "SKILL.md"), "# v1\n");
+  });
+
+  it("happy path: writes pending skill_update row", async () => {
+    const r = await submitShareRequest({
+      pool, managers: ["li86"], requester: "alice",
+      kind: "skill_update", ref: "single-cell",
+      workspacesRoot, shareSnapshotsDir, maxFolderBytes,
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error("type guard");
+    const row = (await pool.query(
+      `SELECT artifact_kind FROM share_requests WHERE share_id=$1`, [r.share_id])).rows[0];
+    expect(row.artifact_kind).toBe("skill_update");
+  });
+
+  it("rejects with target_not_found when no existing org skill", async () => {
+    // Source exists but no matching org skill — should fail at target check.
+    const noOrgRef = "no-org-skill";
+    const srcSkill = path.join(workspacesRoot, "alice", ".claude", "skills", noOrgRef);
+    await mkdir(srcSkill, { recursive: true });
+    await writeFile(path.join(srcSkill, "SKILL.md"), "# v2\n");
+    const r = await submitShareRequest({
+      pool, managers: ["li86"], requester: "alice",
+      kind: "skill_update", ref: noOrgRef,
+      workspacesRoot, shareSnapshotsDir, maxFolderBytes,
+    });
+    expect(r.ok).toBe(false);
+    expect((r as any).reason).toBe("target_not_found");
+  });
+
+  it("rejects ../ path traversal", async () => {
+    const r = await submitShareRequest({
+      pool, managers: ["li86"], requester: "alice",
+      kind: "skill_update", ref: "../../etc",
+      workspacesRoot, shareSnapshotsDir, maxFolderBytes,
+    });
+    expect(r).toEqual({ ok: false, reason: "invalid_ref" });
+  });
+
+  it("rejects missing manifest", async () => {
+    const skill = path.join(workspacesRoot, "alice", ".claude", "skills", "no-manifest");
+    await mkdir(skill, { recursive: true });
+    await writeFile(path.join(skill, "qc.py"), "x");
+    // also create matching org skill so we hit missing_manifest before target_not_found
+    await mkdir(path.join(workspacesRoot, "shared", "skills", "no-manifest"), { recursive: true });
+    const r = await submitShareRequest({
+      pool, managers: ["li86"], requester: "alice",
+      kind: "skill_update", ref: "no-manifest",
+      workspacesRoot, shareSnapshotsDir, maxFolderBytes,
+    });
+    expect(r.ok).toBe(false);
+    expect((r as any).reason).toBe("missing_manifest");
+  });
+});
+
 // ─── decideShareRequest skill approve branch ──────────────────────────────────
 
 describe("decideShareRequest skill approve branch", () => {

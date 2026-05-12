@@ -65,6 +65,70 @@ export async function submitSkillShareRequest(args: SubmitArgs): Promise<SubmitR
   return { ok: true, share_id };
 }
 
+export async function submitSkillUpdateShareRequest(args: SubmitArgs): Promise<SubmitResult> {
+  // Same source validation as submitSkillShareRequest.
+  const userSkillsRoot = path.join(args.workspacesRoot, args.requester, ".claude", "skills");
+  const resolved = safeJoin(userSkillsRoot, args.ref);
+  if (resolved === null) {
+    return { ok: false, reason: "invalid_ref" };
+  }
+
+  let st;
+  try { st = await stat(resolved); }
+  catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") {
+      return { ok: false, reason: "source_not_found" };
+    }
+    throw e;
+  }
+  if (!st.isDirectory()) {
+    return { ok: false, reason: "source_not_found", detail: "ref is not a directory" };
+  }
+
+  const manifest = await readSkillManifest(resolved);
+  if (manifest === null) {
+    return { ok: false, reason: "missing_manifest", detail: "no SKILL.md at top level" };
+  }
+
+  // The key difference from submitSkillShareRequest: target MUST already exist.
+  const target = path.join(args.workspacesRoot, "shared", "skills", args.ref);
+  try {
+    const ts = await stat(target);
+    if (!ts.isDirectory()) {
+      return { ok: false, reason: "target_not_found", detail: `${target} exists but is not a directory` };
+    }
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") {
+      return { ok: false, reason: "target_not_found", detail: `no existing org skill at shared/skills/${args.ref} — submit as kind='skill' instead` };
+    }
+    throw e;
+  }
+
+  const files = await walkSkillFiles(resolved);
+  const share_id = randomUUID();
+  const tarPath = path.join(args.shareSnapshotsDir, `${share_id}.tar.gz`);
+  try {
+    await packSkillTarball({ skillDir: resolved, destTar: tarPath });
+  } catch (e) {
+    return { ok: false, reason: "snapshot_failed", detail: (e as Error).message };
+  }
+
+  const snapshot_meta: Record<string, unknown> = {
+    root_name: path.basename(resolved),
+    manifest,
+    files,
+  };
+
+  await args.pool.query(
+    `INSERT INTO share_requests
+       (share_id, artifact_kind, artifact_ref, snapshot_meta,
+        requester, reviewer, requester_note)
+     VALUES ($1, 'skill_update', $2, $3, $4, $5, $6)`,
+    [share_id, args.ref, snapshot_meta, args.requester, args.managers[0], args.note ?? null],
+  );
+  return { ok: true, share_id };
+}
+
 export async function approveSkillShareRequest(args: {
   row:                ShareRow;
   workspacesRoot:     string;

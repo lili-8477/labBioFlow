@@ -6,6 +6,7 @@ import { appendAudit } from "./memory-repo.js";
 import {
   submitSkillShareRequest,
   approveSkillShareRequest,
+  submitSkillUpdateShareRequest,
 } from "./share-repo-skill.js";
 import {
   submitFolderShareRequest,
@@ -90,7 +91,8 @@ export type SubmitResult =
         | "source_not_found"
         | "missing_manifest"
         | "snapshot_failed"
-        | "oversize";
+        | "oversize"
+        | "target_not_found";
       detail?: string };
 
 export async function submitShareRequest(args: SubmitArgs): Promise<SubmitResult> {
@@ -102,6 +104,9 @@ export async function submitShareRequest(args: SubmitArgs): Promise<SubmitResult
   }
   if (args.kind === "folder") {
     return await submitFolderShareRequest(args);
+  }
+  if (args.kind === "skill_update") {
+    return await submitSkillUpdateShareRequest(args);
   }
   if (args.kind !== "memory") {
     return { ok: false, reason: "not_implemented" };

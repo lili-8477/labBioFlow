@@ -120,6 +120,18 @@ describe('share-api plugin', () => {
       expect(res.statusCode).toBe(413);
       expect(res.json()).toMatchObject({ error: 'folder too large' });
     });
+
+    it('returns 404 when skill_update target does not exist', async () => {
+      depsBag.repo.submitShareRequest.mockResolvedValueOnce({
+        ok: false, reason: 'target_not_found', detail: 'no existing org skill at shared/skills/foo',
+      });
+      const res = await app.inject({
+        method: 'POST', url: '/share/submit',
+        payload: { requester: 'alice', kind: 'skill_update', ref: 'foo' },
+      });
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toMatchObject({ error: 'target not found' });
+    });
   });
 
   // ─── GET /share/list ───────────────────────────────────────────────────────

@@ -104,6 +104,8 @@ export function shareRoutesPlugin(deps: ShareApiDeps) {
           reply.code(400); return { error: 'invalid ref' };
         case 'source_not_found':
           reply.code(404); return { error: 'source not found', detail: result.detail };
+        case 'target_not_found':
+          reply.code(404); return { error: 'target not found', detail: result.detail };
         case 'missing_manifest':
           reply.code(400); return { error: 'skill is missing SKILL.md' };
         case 'oversize':
