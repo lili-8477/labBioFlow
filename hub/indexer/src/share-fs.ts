@@ -189,9 +189,11 @@ export async function atomicReplaceSkillDir(opts: {
   // The tarball top-level dir name equals the basename of the source skillDir
   // passed to packSkillTarball, which may differ from opts.name. Derive it
   // from the first written path segment.
-  const topLevelDir = written.length > 0
-    ? written[0]!.split("/")[0]!
-    : opts.name;
+  if (written.length === 0) {
+    await rmFs(newDir, { recursive: true, force: true });
+    throw new Error("srcTar contains no entries — refusing atomic replace");
+  }
+  const topLevelDir = written[0]!.split("/")[0]!;
   const innerExtracted = path.join(newDir, topLevelDir);
   const hoistTmp = path.join(opts.sharedSkillsDir, `.${opts.name}.hoist.${opts.shareId}`);
   await rename(innerExtracted, hoistTmp);
@@ -211,7 +213,13 @@ export async function atomicReplaceSkillDir(opts: {
   }
 
   // Step 5: delete .old (best-effort; failure here is non-fatal to the caller).
-  await rmFs(oldDir, { recursive: true, force: true });
+  try {
+    await rmFs(oldDir, { recursive: true, force: true });
+  } catch (e) {
+    // Step 4 already succeeded — install is live. .old leftover is non-fatal
+    // but noisy; surface for operator awareness.
+    console.warn(`[atomicReplaceSkillDir] failed to remove ${oldDir}: ${(e as Error).message}`);
+  }
 
   return written;
 }
