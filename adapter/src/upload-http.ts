@@ -27,6 +27,10 @@ export interface UploadServerOptions {
 }
 
 const DENY_NAMES = new Set([".env", ".claude", "CLAUDE.md", ".bioflow"]);
+// Carve-out: skill folder uploads land under .claude/skills/. For these we
+// skip the .claude DENY_NAMES check and switch the allowed subtree to
+// .claude/skills/. Anything else under .claude/ stays denied.
+const SKILLS_PREFIX = ".claude/skills/";
 
 export function startUploadServer(opts: UploadServerOptions): Server {
   const { workspaceRoot, port } = opts;
@@ -98,9 +102,17 @@ async function handle(
     return;
   }
 
+  const isSkillUpload = relPath.startsWith(SKILLS_PREFIX);
+  const allowedPrefix = isSkillUpload
+    ? resolve(ctx.workspaceRoot, ".claude/skills") + "/"
+    : ctx.allowedPrefix;
+
   // Reject deny-listed top-level names defensively, even within the allowed
   // subtree — nothing legitimate should land at e.g. local_projects/.env.
+  // Skill uploads must traverse .claude/, so let that one segment through;
+  // the isUnder check below still scopes them to .claude/skills/.
   for (const seg of relPath.split("/")) {
+    if (isSkillUpload && seg === ".claude") continue;
     if (DENY_NAMES.has(seg)) {
       sendJson(res, 403, { error: "denied_name", segment: seg });
       return;
@@ -108,7 +120,7 @@ async function handle(
   }
 
   const abs = resolve(ctx.workspaceRoot, relPath);
-  if (!isUnder(abs, ctx.allowedPrefix)) {
+  if (!isUnder(abs, allowedPrefix)) {
     sendJson(res, 403, { error: "path_outside_allowed_subtree", path: abs });
     return;
   }
@@ -125,7 +137,7 @@ async function handle(
     sendJson(res, 500, { error: "stat_parent_failed", message: (err as Error).message });
     return;
   }
-  if (!isUnder(parentReal + "/", ctx.allowedPrefix)) {
+  if (!isUnder(parentReal + "/", allowedPrefix)) {
     sendJson(res, 403, { error: "parent_resolves_outside_allowed_subtree", parent: parentReal });
     return;
   }
