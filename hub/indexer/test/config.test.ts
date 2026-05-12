@@ -108,4 +108,14 @@ describe("loadConfig", () => {
     const cfg = loadConfig({ PG_URL: 'postgres://x', SHARE_CLEANUP_INTERVAL_HOURS: '6' });
     expect(cfg.shareCleanupIntervalHours).toBe(6);
   });
+
+  it('shareAutoCloseIdleDays defaults to 30', () => {
+    const cfg = loadConfig({ PG_URL: 'postgres://x' });
+    expect(cfg.shareAutoCloseIdleDays).toBe(30);
+  });
+
+  it('shareAutoCloseIntervalHours reads SHARE_AUTO_CLOSE_INTERVAL_HOURS env override', () => {
+    const cfg = loadConfig({ PG_URL: 'postgres://x', SHARE_AUTO_CLOSE_INTERVAL_HOURS: '6' });
+    expect(cfg.shareAutoCloseIntervalHours).toBe(6);
+  });
 });

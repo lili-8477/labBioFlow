@@ -112,6 +112,8 @@ services:
       SHARE_MAX_FOLDER_BYTES: "104857600"
       SHARE_SNAPSHOT_TTL_DAYS: "30"
       SHARE_CLEANUP_INTERVAL_HOURS: "24"
+      SHARE_AUTO_CLOSE_IDLE_DAYS: "30"
+      SHARE_AUTO_CLOSE_INTERVAL_HOURS: "24"
     volumes:
       - ./workspaces:/workspaces
     depends_on:

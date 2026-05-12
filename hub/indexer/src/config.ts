@@ -19,6 +19,8 @@ export interface Config {
   shareMaxFolderBytes:        number;
   shareSnapshotTtlDays:       number;
   shareCleanupIntervalHours:  number;
+  shareAutoCloseIdleDays:       number;
+  shareAutoCloseIntervalHours:  number;
 }
 
 function parseIntVar(env: Record<string, string | undefined>, name: string, fallback: number): number {
@@ -55,6 +57,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   const shareMaxFolderBytes       = parseIntVar(env, "SHARE_MAX_FOLDER_BYTES",        100 * 1024 * 1024);
   const shareSnapshotTtlDays      = parseIntVar(env, "SHARE_SNAPSHOT_TTL_DAYS",      30);
   const shareCleanupIntervalHours = parseIntVar(env, "SHARE_CLEANUP_INTERVAL_HOURS", 24);
+  const shareAutoCloseIdleDays      = parseIntVar(env, "SHARE_AUTO_CLOSE_IDLE_DAYS",      30);
+  const shareAutoCloseIntervalHours = parseIntVar(env, "SHARE_AUTO_CLOSE_INTERVAL_HOURS", 24);
   return {
     pgUrl,
     workspacesRoot: env.WORKSPACES_ROOT ?? "/workspaces",
@@ -72,5 +76,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     shareMaxFolderBytes,
     shareSnapshotTtlDays,
     shareCleanupIntervalHours,
+    shareAutoCloseIdleDays,
+    shareAutoCloseIntervalHours,
   };
 }

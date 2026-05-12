@@ -24,7 +24,7 @@ import {
 } from "./memory-repo.js";
 import { writeDistillation } from "./distiller-repo.js";
 import { shareRoutesPlugin } from "./share-api.js";
-import { cleanupOldSnapshots } from "./share-cleanup.js";
+import { cleanupOldSnapshots, autoCloseIdleRequests } from "./share-cleanup.js";
 import {
   submitShareRequest,
   listShareRequests,
@@ -113,6 +113,28 @@ async function main(): Promise<void> {
   };
 
   startCleanupLoop();
+
+  const startAutoCloseLoop = (): void => {
+    const intervalMs = cfg.shareAutoCloseIntervalHours * 60 * 60 * 1000;
+    const tick = async (): Promise<void> => {
+      try {
+        const result = await autoCloseIdleRequests({
+          pool,
+          idleDays: cfg.shareAutoCloseIdleDays,
+        });
+        if (result.closed > 0) {
+          logger.info({ result }, "share auto-close pass");
+        }
+      } catch (err) {
+        logger.error({ err }, "share auto-close crashed");
+      } finally {
+        setTimeout(tick, intervalMs);
+      }
+    };
+    setTimeout(tick, 5_000);   // boot-time pass after a brief delay
+  };
+
+  startAutoCloseLoop();
 
   const app = buildApp({
     pool,
