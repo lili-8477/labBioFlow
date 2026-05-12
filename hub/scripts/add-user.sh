@@ -118,7 +118,11 @@ mkdir -p "${WORKSPACE}/.claude/skills" \
          "${WORKSPACE}/.claude/claude-projects" \
          "${WORKSPACE}/.claude/commands" \
          "${WORKSPACE}/.claude/hooks" \
-         "${WORKSPACE}/local_projects"
+         "${WORKSPACE}/local_projects" \
+         "${WORKSPACE}/.latch"
+# .latch holds the Latch CLI token (used by scbench downloads). Credential —
+# bind-mounted to /home/node/.latch so it survives container recreates.
+chmod 700 "${WORKSPACE}/.latch"
 
 # Seed a minimal Claude Code settings file so the CLI has sensible defaults.
 if [[ ! -f "${WORKSPACE}/.claude/settings.json" ]]; then
@@ -290,6 +294,7 @@ MOUNTS=(
     -v "${WORKSPACE}/.claude/settings.json:/home/node/.claude/settings.json"
     # Persist Claude Code session JSONLs across container recreations.
     -v "${WORKSPACE}/.claude/claude-projects:/home/node/.claude/projects"
+    -v "${WORKSPACE}/.latch:/home/node/.latch"
     -v "${SHARED_DIR}/reference:/workspace/shared/reference:ro"
     -v "${SHARED_DIR}/projects:/workspace/shared/projects"
     -v "${SHARED_DIR}/skills:/home/node/.claude/skills-shared:ro"

@@ -44,6 +44,12 @@ fi
 # commands, and the bioflow-memory MCP server. All three operations are
 # idempotent (cp -n + Python merges) so re-running does not clobber
 # user-edited files.
+# Per-user Latch CLI token directory. Bind-mounted to /home/node/.latch so
+# `latch cp` (used by scbench dataset downloads) keeps its token across
+# container recreates. mode 700 — it holds a credential.
+mkdir -p "${WORKSPACE}/.latch"
+chmod 700 "${WORKSPACE}/.latch"
+
 if [[ -d "${SKELETON_DIR}" ]]; then
     mkdir -p "${WORKSPACE}/.claude/commands" \
              "${WORKSPACE}/.claude/agents" \
@@ -155,6 +161,7 @@ docker run -d \
     -v "${WORKSPACE}/.claude/hooks:/home/node/.claude/hooks" \
     -v "${WORKSPACE}/.claude/settings.json:/home/node/.claude/settings.json" \
     -v "${WORKSPACE}/.claude/claude-projects:/home/node/.claude/projects" \
+    -v "${WORKSPACE}/.latch:/home/node/.latch" \
     -v "${SHARED_DIR}/reference:/workspace/shared/reference:ro" \
     -v "${SHARED_DIR}/projects:/workspace/shared/projects" \
     -v "${SHARED_DIR}/skills:/home/node/.claude/skills-shared:ro" \
