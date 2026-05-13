@@ -72,7 +72,7 @@ function stepStatusClass(step: TimelineStep): string {
     <!-- Collapse header -->
     <div class="timeline-header" @click="collapsed = !collapsed">
       <span class="toggle-icon">{{ collapsed ? '\u25B6' : '\u25BC' }}</span>
-      <span class="timeline-icon">\u2699</span>
+      <span class="timeline-icon">⚙</span>
       <span class="timeline-summary">{{ summary }}</span>
       <span v-if="totalDuration != null" class="timeline-duration">
         {{ formatDuration(totalDuration) }}

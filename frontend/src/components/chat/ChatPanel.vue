@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import { ref, nextTick, watch, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useChatStore } from '@/stores/chat'
-import { isDisplayableMessage } from '@/utils/content'
+import { isDisplayableMessage, extractTextContent } from '@/utils/content'
+import type { ChatMessage } from '@/types'
 import ChatMessageComp from '@/components/chat/ChatMessage.vue'
 import ExecutionTimeline from '@/components/chat/ExecutionTimeline.vue'
+import HarnessChecklist from '@/components/chat/HarnessChecklist.vue'
 import { isImage, makeAttachment, uploadAttachment, discardAttachmentFile, type ChatAttachment } from '@/services/chat-attachments'
+import { createProjectWithFiles, composeKickoffMessage, type CreatedProject } from '@/services/project-from-drop'
+import { queueUpload } from '@/services/upload'
 import { isSupported as voiceSupported, startVoice, type VoiceSession } from '@/services/voice'
 
 const chat = useChatStore()
@@ -14,6 +18,12 @@ const messagesEl = ref<HTMLElement | null>(null)
 const attachments = ref<ChatAttachment[]>([])
 const isDragging = ref(false)
 const dragDepth = ref(0)
+const creatingProject = ref(false)
+const projectError = ref<string | null>(null)
+// A drop creates the project + uploads files, but the kickoff message waits
+// here until the user actually hits Send. They can type more context first,
+// or just send for the default "what can you do with this" overview.
+const pendingProject = ref<CreatedProject | null>(null)
 const voiceOn = ref(false)
 const voiceSupportedFlag = voiceSupported()
 let voiceSession: VoiceSession | null = null
@@ -23,7 +33,11 @@ let voiceBaseText = ''
 
 const anyUploading = computed(() => attachments.value.some(a => a.state === 'uploading'))
 const hasContent = computed(
-  () => (input.value.trim().length > 0 || attachments.value.some(a => a.state === 'done')) && !anyUploading.value,
+  () => (
+    input.value.trim().length > 0
+    || attachments.value.some(a => a.state === 'done')
+    || pendingProject.value !== null
+  ) && !anyUploading.value,
 )
 
 // Filter messages for display — hide tool/system messages
@@ -50,13 +64,25 @@ function getTimelineForDisplayMsg(displayIdx: number) {
   return chat.completedTimelines.get(origIdx) || null
 }
 
+// Assistant turns that emitted only tool_use blocks have no text — skip the
+// empty bubble. The timeline rendered below the (now-absent) bubble still
+// shows what the agent did.
+function hasBubbleBody(msg: ChatMessage): boolean {
+  if (msg.role !== 'assistant') return true
+  return extractTextContent(msg.content).trim().length > 0
+}
+
 function send() {
   if (!hasContent.value || chat.sending) return
   if (voiceOn.value) stopVoice()
   const paths = attachments.value
     .filter(a => a.state === 'done' && a.workspacePath)
     .map(a => a.workspacePath)
-  chat.sendMessage(input.value.trim(), paths)
+  const text = pendingProject.value
+    ? composeKickoffMessage(pendingProject.value, input.value.trim())
+    : input.value.trim()
+  pendingProject.value = null
+  chat.sendMessage(text, paths)
   input.value = ''
   clearAttachments()
 }
@@ -130,17 +156,17 @@ function handlePaste(e: ClipboardEvent) {
 }
 
 function onDragEnter(e: DragEvent) {
-  if (!hasImageInDrag(e)) return
+  if (!hasFilesInDrag(e)) return
   e.preventDefault()
   dragDepth.value++
   isDragging.value = true
 }
 function onDragOver(e: DragEvent) {
-  if (!hasImageInDrag(e)) return
+  if (!hasFilesInDrag(e)) return
   e.preventDefault()
 }
 function onDragLeave(e: DragEvent) {
-  if (!hasImageInDrag(e)) return
+  if (!hasFilesInDrag(e)) return
   e.preventDefault()
   dragDepth.value = Math.max(0, dragDepth.value - 1)
   if (dragDepth.value === 0) isDragging.value = false
@@ -150,16 +176,54 @@ function onDrop(e: DragEvent) {
   e.preventDefault()
   dragDepth.value = 0
   isDragging.value = false
-  const files = e.dataTransfer.files
-  if (files && files.length > 0) addFiles(files)
+  const fileList = e.dataTransfer.files
+  if (!fileList || fileList.length === 0) return
+  const all = Array.from(fileList)
+  // Images keep attaching to the current chat. Anything else (CSV, FASTQ,
+  // PDF, …) kicks off a brand-new project in local_projects/ and opens a
+  // fresh chat bound to that folder.
+  const images = all.filter(isImage)
+  const others = all.filter(f => !isImage(f))
+  if (images.length > 0) addFiles(images)
+  if (others.length > 0) void startProjectFromFiles(others)
 }
-function hasImageInDrag(e: DragEvent): boolean {
+function hasFilesInDrag(e: DragEvent): boolean {
   const types = e.dataTransfer?.types
   if (!types) return false
   // dataTransfer.items isn't reliable across browsers during dragenter, so we
-  // accept any drag that carries Files and let addFiles filter by mime.
+  // accept any drag carrying Files; onDrop decides how to route each file.
   for (let i = 0; i < types.length; i++) if (types[i] === 'Files') return true
   return false
+}
+
+// ---- Drop-to-project ----
+
+async function startProjectFromFiles(files: File[]) {
+  if (creatingProject.value || chat.sending) return
+  creatingProject.value = true
+  projectError.value = null
+  try {
+    if (pendingProject.value) {
+      // Additional files dropped before the user sent — append them to the
+      // pending project rather than creating a second one.
+      const proj = pendingProject.value
+      for (const f of files) {
+        const { promise } = queueUpload(f, proj.projectDir)
+        await promise
+        proj.files.push({ name: f.name, workspacePath: `${proj.workspaceDir}/${f.name}` })
+      }
+    } else {
+      pendingProject.value = await createProjectWithFiles(files)
+    }
+  } catch (err) {
+    projectError.value = (err as Error)?.message || String(err)
+  } finally {
+    creatingProject.value = false
+  }
+}
+
+function discardPendingProject() {
+  pendingProject.value = null
 }
 
 // ---- Voice ----
@@ -200,16 +264,71 @@ function swallow(e: DragEvent) {
   if (e.dataTransfer?.types?.includes('Files')) e.preventDefault()
 }
 
+// Poll the harness state while self-driving is on. Two cadences:
+//   - mode (active/installed) — every 5s, cheap and tells us the marker file
+//     is still present (catches container restarts that wipe the flag).
+//   - progress.md — every 3s while sending or active, every 8s when idle,
+//     so the checklist ticks in near-real-time during a /tick run but doesn't
+//     hammer NATS when nothing's happening.
+let harnessModeTimer: number | null = null
+let harnessProgressTimer: number | null = null
+
+function startHarnessPolling() {
+  stopHarnessPolling()
+  harnessModeTimer = window.setInterval(() => { void chat.refreshHarnessMode() }, 5000)
+  const tick = () => {
+    void chat.refreshHarnessProgress()
+    const cadence = chat.sending ? 3000 : 8000
+    harnessProgressTimer = window.setTimeout(tick, cadence)
+  }
+  tick()
+}
+function stopHarnessPolling() {
+  if (harnessModeTimer != null) { clearInterval(harnessModeTimer); harnessModeTimer = null }
+  if (harnessProgressTimer != null) { clearTimeout(harnessProgressTimer); harnessProgressTimer = null }
+}
+
+// React to mode + chat changes. When harness flips on or the user switches
+// chats, kick a fresh fetch immediately so the checklist updates without
+// waiting for the next poll cycle.
+watch(() => chat.harnessActive, (active) => {
+  if (active) startHarnessPolling()
+  else {
+    stopHarnessPolling()
+    chat.harnessProgress = null
+    chat.harnessProject = null
+  }
+})
+watch(() => chat.activeChatId, () => {
+  if (chat.harnessActive) void chat.refreshHarnessProgress()
+})
+
 onMounted(() => {
   window.addEventListener('dragover', swallow)
   window.addEventListener('drop', swallow)
+  // The first refreshHarnessMode happens via AgentPanel on its own mount,
+  // but Chat may render before Agents if it's the visible tab. Do our own
+  // first fetch so the banner shows up immediately on a hard refresh.
+  void chat.refreshHarnessMode().then(() => {
+    if (chat.harnessActive) startHarnessPolling()
+  })
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('dragover', swallow)
   window.removeEventListener('drop', swallow)
+  stopHarnessPolling()
   voiceSession?.abort()
   clearAttachments()
+})
+
+// If the user navigates to a different chat before sending, the pending
+// kickoff no longer makes sense — drop it. The project folder + files stay
+// on disk; only the unsent kickoff is discarded.
+watch(() => chat.activeChatId, (id) => {
+  if (pendingProject.value && pendingProject.value.chatId !== id) {
+    pendingProject.value = null
+  }
 })
 
 // Auto-scroll
@@ -243,10 +362,19 @@ watch(
 
     <!-- Chat content -->
     <template v-else>
+      <!-- Self-driving banner + live checklist. Pinned above messages so it
+           stays visible as the scroll grows. Hidden entirely when the mode
+           is off — the chat behaves exactly as before in that case. -->
+      <HarnessChecklist
+        v-if="chat.harnessActive"
+        :progress="chat.harnessProgress"
+        :project-name="chat.harnessProject"
+      />
+
       <div ref="messagesEl" class="messages">
         <!-- Rendered messages with inline timelines -->
         <template v-for="(msg, i) in displayMessages" :key="i">
-          <ChatMessageComp :message="msg" />
+          <ChatMessageComp v-if="hasBubbleBody(msg)" :message="msg" />
           <!-- Show timeline below assistant messages that had tool activity -->
           <ExecutionTimeline
             v-if="msg.role === 'assistant' && getTimelineForDisplayMsg(i)"
@@ -313,13 +441,34 @@ watch(
           </div>
         </div>
 
-        <div v-if="isDragging" class="drop-overlay">Drop image to attach</div>
+        <div v-if="isDragging" class="drop-overlay">
+          <div>Drop file</div>
+          <div class="drop-overlay-sub">images attach &middot; everything else starts a new project</div>
+        </div>
+
+        <div v-if="creatingProject" class="project-status">
+          <span class="project-status-spinner"></span>
+          <span>Uploading to project…</span>
+        </div>
+        <div v-else-if="pendingProject" class="project-status">
+          <span class="project-status-icon">&#x1F4C1;</span>
+          <span>
+            Project <code>{{ pendingProject.projectName }}</code> ready &middot;
+            {{ pendingProject.files.length }} file{{ pendingProject.files.length === 1 ? '' : 's' }} &middot;
+            add context or hit send
+          </span>
+          <button class="project-status-dismiss" @click="discardPendingProject" title="Discard pending project">&times;</button>
+        </div>
+        <div v-if="projectError" class="project-status project-status-error">
+          <span>Project creation failed: {{ projectError }}</span>
+          <button class="project-status-dismiss" @click="projectError = null" title="Dismiss">&times;</button>
+        </div>
 
         <div class="input-row">
           <textarea
             v-model="input"
             class="message-input"
-            placeholder="Type a message, drop or paste an image…"
+            placeholder="Type a message. Drop an image to attach, or any other file to start a new project."
             @keydown="handleKeydown"
             @paste="handlePaste"
             rows="1"
@@ -414,12 +563,45 @@ watch(
 .input-area.drag-active { background: var(--bg-tertiary); }
 .drop-overlay {
   position: absolute; inset: 0;
-  display: flex; align-items: center; justify-content: center;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px;
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   border: 2px dashed var(--accent);
   border-radius: var(--radius);
   color: var(--accent); font-weight: 600; pointer-events: none;
   z-index: 1;
+}
+.drop-overlay-sub {
+  font-weight: 400; font-size: 0.8em; opacity: 0.85;
+}
+
+.project-status {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 8px; padding: 6px 10px;
+  background: var(--bg-primary); border: 1px solid var(--border);
+  border-radius: var(--radius); font-size: 0.85em; color: var(--text-secondary);
+}
+.project-status-error {
+  border-color: var(--danger); color: var(--danger);
+  justify-content: space-between;
+}
+.project-status code {
+  background: var(--bg-tertiary); padding: 0 4px; border-radius: 3px;
+  font-size: 0.95em;
+}
+.project-status-icon { font-size: 1em; }
+.project-status-spinner {
+  width: 12px; height: 12px; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.project-status-dismiss {
+  background: transparent; border: none; color: inherit;
+  cursor: pointer; font-size: 1.1em; line-height: 1; padding: 0 4px;
 }
 
 .attachment-strip {

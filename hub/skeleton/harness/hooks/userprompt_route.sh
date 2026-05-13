@@ -8,8 +8,11 @@
 # already started their message with a slash command.
 set -euo pipefail
 
+LOG="$HOME/.claude/.harness_active.log"
+log() { printf '%s userprompt_route %s\n' "$(date -Iseconds)" "$*" >> "$LOG"; }
+
 # Harness toggle: stay no-op unless self-driving mode is enabled.
-[[ -f "$HOME/.claude/.harness_active" ]] || exit 0
+[[ -f "$HOME/.claude/.harness_active" ]] || { log "noop: marker absent"; exit 0; }
 
 # Read the JSON envelope from stdin; extract the prompt field.
 INPUT="$(cat)"
@@ -22,8 +25,10 @@ except Exception:
 
 # User-initiated slash commands pass through untouched.
 case "$PROMPT" in
-  /*) exit 0 ;;
+  /*) log "passthrough: slash command (${PROMPT:0:60})"; exit 0 ;;
 esac
+
+log "inject: routing to /tick (prompt=${PROMPT:0:80})"
 
 # Inject orchestration context. Claude Code appends this stdout as additional
 # context to the user prompt, so the agent sees the directive alongside the

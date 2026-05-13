@@ -25,6 +25,26 @@ export interface ConnectionConfig {
 }
 
 // ============================================================
+// Tick-harness progress (parsed from progress.md by the adapter)
+// ============================================================
+
+export interface HarnessStep {
+  name: string
+  description: string
+  done: boolean
+  reviewed: boolean
+}
+
+export interface HarnessProgress {
+  pipeline: string | null
+  steps: HarnessStep[]
+  complete: boolean
+  pendingFeedback: number
+  /** Index of the next ☐ step; null when nothing is pending. */
+  nextStepIndex: number | null
+}
+
+// ============================================================
 // Chat
 // ============================================================
 

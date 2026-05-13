@@ -247,6 +247,68 @@ export class RpcRouter {
         return { success: true, active: enabled };
       }
 
+      case "get_harness_progress": {
+        // Two ways to find the right progress.md:
+        //   1. project_name matches a local_projects/<dir>/progress.md (works
+        //      for drop-created chats where chat-name === project-dir name).
+        //   2. Fallback: the most-recently-modified progress.md anywhere under
+        //      local_projects/. Covers the typed-prompt flow where the chat
+        //      keeps its default name but tick-bootstrap picks a project slug
+        //      from the user's message.
+        // Returns the matched project name so the UI can show it.
+        const projectsRoot = path.join(this.deps.workspaceRoot, "local_projects");
+
+        const tryPath = async (p: string): Promise<string | null> => {
+          try { return await fs.readFile(p, "utf8"); }
+          catch { return null; }
+        };
+
+        const projectName = (params.project_name as string | undefined)?.trim();
+        let raw: string | null = null;
+        let matchedProject: string | null = null;
+
+        // Path #1: by name.
+        if (projectName && !projectName.includes("/") && !projectName.startsWith(".")) {
+          raw = await tryPath(path.join(projectsRoot, projectName, "progress.md"));
+          if (raw != null) matchedProject = projectName;
+        }
+
+        // Path #2: most-recently-modified progress.md as a fallback. We only
+        // consider files modified in the last 6h so a stale project from
+        // weeks ago doesn't masquerade as the active one.
+        if (raw == null) {
+          let dirs: string[] = [];
+          try {
+            dirs = await fs.readdir(projectsRoot);
+          } catch {
+            return { success: true, exists: false, progress: null, project_name: null };
+          }
+          const cutoff = Date.now() - 6 * 60 * 60 * 1000;
+          let best: { name: string; mtime: number } | null = null;
+          for (const d of dirs) {
+            if (d.startsWith(".") || d.startsWith("_")) continue;
+            const p = path.join(projectsRoot, d, "progress.md");
+            const st = await fs.stat(p).catch(() => null);
+            if (!st || st.mtimeMs < cutoff) continue;
+            if (!best || st.mtimeMs > best.mtime) best = { name: d, mtime: st.mtimeMs };
+          }
+          if (best) {
+            raw = await tryPath(path.join(projectsRoot, best.name, "progress.md"));
+            if (raw != null) matchedProject = best.name;
+          }
+        }
+
+        if (raw == null) {
+          return { success: true, exists: false, progress: null, project_name: null };
+        }
+        return {
+          success: true,
+          exists: true,
+          progress: parseProgressMd(raw),
+          project_name: matchedProject,
+        };
+      }
+
       case "set_active_agent": {
         const chatId = (params.chat_name as string) || (params.chat_id as string);
         const agentName = params.agent_name as string;
@@ -450,6 +512,95 @@ const MEDIA_TYPE_BY_EXT: Record<string, ImageRef["mediaType"]> = {
   ".gif": "image/gif",
   ".webp": "image/webp",
 };
+
+// ─── progress.md parsing ───────────────────────────────────────────────
+// The tick harness keeps all per-project state in a single markdown file. The
+// frontend wants a parsed view for its self-driving checklist, but we don't
+// want a full markdown library here — the structure is rigid enough that line
+// scanning is sufficient. Tolerant on input: if a section is missing or the
+// format drifts, we degrade to "no steps" rather than throwing.
+
+export interface ProgressStep {
+  /** First word after the box (and the optional `(reviewed)` marker). */
+  name: string;
+  /** Rest of the line up to ` | ` (which separates description from metrics). */
+  description: string;
+  done: boolean;
+  reviewed: boolean;
+}
+
+export interface ParsedProgress {
+  pipeline: string | null;
+  steps: ProgressStep[];
+  complete: boolean;
+  /** Count of unchecked `☐` lines under `## Review feedback`. */
+  pendingFeedback: number;
+  /** Index of the next ☐ step (or null when nothing is pending). The
+   *  orchestrator dispatches this one next, so the UI can highlight it. */
+  nextStepIndex: number | null;
+}
+
+const STEP_LINE_RE = /^-\s*([☑☐])\s*(?:\(reviewed\)\s*)?(\S+)(?:\s+(.*))?$/u;
+
+export function parseProgressMd(raw: string): ParsedProgress {
+  // Walk the file once, tracking which top-level section we're in. Plan and
+  // Review feedback are the only sections with parseable structure.
+  let section: string | null = null;
+  let pipeline: string | null = null;
+  const steps: ProgressStep[] = [];
+  let pendingFeedback = 0;
+  let complete = false;
+
+  for (const line of raw.split(/\r?\n/)) {
+    const headerMatch = /^##\s+(.+?)\s*$/.exec(line);
+    if (headerMatch) {
+      const heading = (headerMatch[1] ?? "").toLowerCase();
+      if (heading.startsWith("status:")) {
+        if (/complete/i.test(line)) complete = true;
+        section = null;
+        continue;
+      }
+      // First word: plan / sample(s) / pipeline / review / ...
+      section = heading.split(/\s+/)[0] ?? null;
+      continue;
+    }
+
+    if (section === "pipeline" && line.trim() && !pipeline) {
+      pipeline = line.trim();
+      continue;
+    }
+
+    if (section === "plan") {
+      const m = STEP_LINE_RE.exec(line);
+      if (!m) continue;
+      const box = m[1] ?? "";
+      const name = m[2] ?? "";
+      const restRaw = (m[3] ?? "").trim();
+      // Strip metrics suffix (` | metric=value ...`) from the human-readable
+      // description so the checklist stays one line.
+      const description = (restRaw.split(/\s*\|\s*/, 1)[0] ?? "").trim();
+      steps.push({
+        name,
+        description,
+        done: box === "☑",
+        reviewed: /\(reviewed\)/.test(line),
+      });
+    }
+
+    if (section === "review" && /^-\s*☐/.test(line)) {
+      pendingFeedback++;
+    }
+  }
+
+  const nextStepIndex = steps.findIndex(s => !s.done);
+  return {
+    pipeline,
+    steps,
+    complete,
+    pendingFeedback,
+    nextStepIndex: nextStepIndex === -1 ? null : nextStepIndex,
+  };
+}
 
 const IMAGE_LINE_RE = /^\[image:\s*([^\]]+)\]\s*$/;
 

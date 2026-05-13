@@ -7,31 +7,15 @@ import type { TemplateFile } from '@/types'
 const chat = useChatStore()
 const templates = ref<TemplateFile[]>([])
 const loadingTemplates = ref(false)
-
-// Self-driving (tick harness) mode toggle.
-const harnessActive = ref(false)
-const harnessInstalled = ref(false)
 const harnessBusy = ref(false)
-
-async function loadHarnessMode() {
-  try {
-    const res = await natsService.invoke('get_harness_mode', {}) as {
-      success?: boolean; active?: boolean; installed?: boolean
-    }
-    harnessActive.value = !!res?.active
-    harnessInstalled.value = !!res?.installed
-  } catch { /* ignore */ }
-}
 
 async function toggleHarness() {
   if (harnessBusy.value) return
   harnessBusy.value = true
   try {
-    const next = !harnessActive.value
-    const res = await natsService.invoke('set_harness_mode', { enabled: next }) as {
-      success?: boolean; active?: boolean
-    }
-    harnessActive.value = !!res?.active
+    const next = !chat.harnessActive
+    await natsService.invoke('set_harness_mode', { enabled: next })
+    await chat.refreshHarnessMode()
   } catch (e) {
     console.error('Failed to toggle harness mode:', e)
   } finally {
@@ -43,7 +27,7 @@ onMounted(async () => {
   if (chat.activeChatId) {
     await chat.loadAgents(chat.activeChatId)
   }
-  await loadHarnessMode()
+  await chat.refreshHarnessMode()
   loadTemplates()
 })
 
@@ -90,25 +74,25 @@ async function applyTemplate(template: TemplateFile) {
     <!-- Mode -->
     <div class="section">
       <div class="section-title">Mode</div>
-      <div class="mode-card" :class="{ disabled: !harnessInstalled }">
+      <div class="mode-card" :class="{ disabled: !chat.harnessInstalled }">
         <div class="mode-row">
           <span class="mode-icon">&#x21BB;</span>
           <div class="mode-info">
             <span class="mode-name">Self-driving</span>
             <span class="mode-desc">
-              <template v-if="!harnessInstalled">Tick harness not installed for this workspace.</template>
-              <template v-else-if="harnessActive">Hooks active — Stop re-prompts /tick, progress.md auto-commits, every tool call audited.</template>
+              <template v-if="!chat.harnessInstalled">Tick harness not installed for this workspace.</template>
+              <template v-else-if="chat.harnessActive">Hooks active — Stop re-prompts /tick, progress.md auto-commits, every tool call audited.</template>
               <template v-else>Hooks idle — chat behaves as a normal Claude Code session.</template>
             </span>
           </div>
           <button
             class="btn-toggle"
-            :class="{ on: harnessActive }"
-            :disabled="!harnessInstalled || harnessBusy"
+            :class="{ on: chat.harnessActive }"
+            :disabled="!chat.harnessInstalled || harnessBusy"
             @click="toggleHarness()"
-            :title="harnessActive ? 'Disable self-driving' : 'Enable self-driving'"
+            :title="chat.harnessActive ? 'Disable self-driving' : 'Enable self-driving'"
           >
-            {{ harnessActive ? 'On' : 'Off' }}
+            {{ chat.harnessActive ? 'On' : 'Off' }}
           </button>
         </div>
       </div>

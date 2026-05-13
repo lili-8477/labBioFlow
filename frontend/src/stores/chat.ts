@@ -5,7 +5,7 @@ import { extractTextContent } from '@/utils/content'
 import type {
   ChatInfo, ChatMessage, StreamMessage, StreamChunk,
   StepMessage, ChatFinished, Suggestion, AgentInfo,
-  StepMessageData, TimelineStep,
+  StepMessageData, TimelineStep, HarnessProgress,
 } from '@/types'
 
 export const useChatStore = defineStore('chat', () => {
@@ -18,6 +18,16 @@ export const useChatStore = defineStore('chat', () => {
   const suggestions = ref<Suggestion[]>([])
   const agents = ref<AgentInfo[]>([])
   const activeAgent = ref<string | null>(null)
+
+  // Self-driving (tick harness) state. Active = marker file present in the
+  // workspace; installed = the orchestrator command is on disk. Progress is
+  // parsed from local_projects/<chat-name>/progress.md by the adapter.
+  const harnessActive = ref(false)
+  const harnessInstalled = ref(false)
+  const harnessProgress = ref<HarnessProgress | null>(null)
+  // The project dir the adapter actually matched (chat-name path or fallback).
+  // Surfaced in the banner so the user can tell which progress.md is being read.
+  const harnessProject = ref<string | null>(null)
 
   // Live timeline steps for the current turn (while agent is running)
   const liveTimeline = ref<TimelineStep[]>([])
@@ -413,11 +423,51 @@ export const useChatStore = defineStore('chat', () => {
     await loadChats()
   }
 
+  // ---- Self-driving (tick harness) ----
+
+  async function refreshHarnessMode() {
+    try {
+      const res = await natsService.invoke('get_harness_mode', {}) as {
+        success?: boolean; active?: boolean; installed?: boolean
+      }
+      harnessActive.value = !!res?.active
+      harnessInstalled.value = !!res?.installed
+    } catch { /* ignore — keep last known values */ }
+  }
+
+  async function refreshHarnessProgress() {
+    // Pass the chat name as a hint; the adapter falls back to the most
+    // recently-modified progress.md if the chat name doesn't match a project
+    // dir, so typed-prompt chats also see their plan.
+    const name = activeChat.value?.name
+    try {
+      const res = await natsService.invoke('get_harness_progress', {
+        project_name: name,
+      }) as {
+        success?: boolean; exists?: boolean;
+        progress?: HarnessProgress | null;
+        project_name?: string | null;
+      }
+      if (res?.exists) {
+        harnessProgress.value = res.progress ?? null
+        harnessProject.value = res.project_name ?? null
+      } else {
+        harnessProgress.value = null
+        harnessProject.value = null
+      }
+    } catch {
+      harnessProgress.value = null
+      harnessProject.value = null
+    }
+  }
+
   return {
     chats, activeChatId, activeChat, messages, streamingText, isStreaming,
     sending, suggestions, agents, activeAgent,
     liveTimeline, completedTimelines,
+    harnessActive, harnessInstalled, harnessProgress, harnessProject,
     loadChats, createChat, deleteChat, selectChat, sendMessage,
     stopChat, loadAgents, setActiveAgent, updateChatName,
+    refreshHarnessMode, refreshHarnessProgress,
   }
 })
